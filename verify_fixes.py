@@ -42,7 +42,7 @@ def check_frequency_reading():
         return False
     
     # Check for frequency initialization
-    if 'freq_resp = query_radio("FA")' in content:
+    if 'freq_resp = query_radio("FA"' in content:
         print("   ✅ Frequency reading code found")
     else:
         print("   ❌ Frequency reading code missing")
