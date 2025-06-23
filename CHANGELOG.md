@@ -1,5 +1,10 @@
 # truSDX-AI Driver Changelog
 
+## Version 1.1.8-AI (2024-06-XX)
+### Fixed
+- Reverted `TX1` back to `TX0` in VOX and RTS/DTR handlers to restore reliable TX turn-off and VU-meter activity.
+- Startup now queries truSDX for current frequency/mode; no longer hard-defaults to 14.074 MHz.
+
 ## Version 1.1.7-AI-PTT-FIXED (2024-06-11)
 
 ### 🔧 PTT ENHANCEMENT

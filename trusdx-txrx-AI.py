@@ -215,6 +215,63 @@ def check_audio_setup():
         log(f"Audio setup error: {e}")
         return False
 
+def query_radio(cmd, retries=3, timeout=0.2):
+    """Query radio with command and retry logic
+    
+    Args:
+        cmd: Command string (e.g., "FA", "MD")
+        retries: Number of retry attempts (default: 3)
+        timeout: Timeout in seconds to wait for response (default: 0.2)
+    
+    Returns:
+        bytes: Response from radio or None if failed
+    """
+    global ser
+    
+    for attempt in range(retries):
+        try:
+            # Clear any existing data in buffer
+            if ser.in_waiting > 0:
+                ser.read(ser.in_waiting)
+            
+            # Send command
+            command = f";{cmd};".encode('utf-8')
+            ser.write(command)
+            ser.flush()
+            
+            # Wait for response
+            start_time = time.time()
+            response = b''
+            
+            while time.time() - start_time < timeout:
+                if ser.in_waiting > 0:
+                    chunk = ser.read(ser.in_waiting)
+                    response += chunk
+                    
+                    # Check if we have a complete response (ends with ';')
+                    if b';' in response:
+                        # Find the last complete response
+                        responses = response.split(b';')
+                        for resp in responses:
+                            if resp and resp.startswith(cmd.encode('utf-8')):
+                                return resp + b';'
+                        break
+                
+                time.sleep(0.01)  # Small delay to avoid busy waiting
+            
+            # If we got here, no valid response was received
+            if attempt < retries - 1:
+                log(f"Query {cmd} attempt {attempt + 1} failed, retrying...")
+                time.sleep(0.05)  # Small delay before retry
+            
+        except Exception as e:
+            log(f"Error in query_radio({cmd}) attempt {attempt + 1}: {e}")
+            if attempt < retries - 1:
+                time.sleep(0.05)
+    
+    log(f"Query {cmd} failed after {retries} attempts")
+    return None
+
 # Radio state variables for consistent responses
 radio_state = {
     'vfo_a_freq': '00014074000',  # Will be read from radio at startup
@@ -554,7 +611,7 @@ def handle_vox(samples8, ser):
         if not status[0]:
             status[0] = True
             #log("***TX mode")
-            ser.write(b";TX1;")
+            ser.write(b";TX0;")
             ser.flush()
     elif status[0]:  # in TX and no audio detected (silence)
         tx_cat_delay(ser)
@@ -568,7 +625,7 @@ def handle_rts_dtr(ser, cat):
         status[4] = True    # keyed by RTS/DTR
         status[0] = True
         #log("***TX mode")
-        ser.write(b";TX1;")
+        ser.write(b";TX0;")
         ser.flush()
     elif status[4] and not (cat.cts or cat.dsr):  #if keyed by RTS/DTR
         tx_cat_delay(ser)
@@ -806,42 +863,24 @@ def run():
         # Read current radio settings at startup
         print(f"\033[1;33m[INIT] Reading current radio settings...\033[0m")
         try:
-            # Query current frequency and mode
-            ser.write(b";FA;")
-            ser.flush()
-            time.sleep(0.1)
+            # Query current frequency using new helper function
+            freq_resp = query_radio("FA")
+            if freq_resp and freq_resp.startswith(b"FA") and len(freq_resp) >= 15:
+                radio_state['vfo_a_freq'] = freq_resp[2:-1].decode().ljust(11,'0')[:11]
+                freq_mhz = float(radio_state['vfo_a_freq']) / 1000000.0
+                print(f"\033[1;32m[INIT] Current frequency: {freq_mhz:.3f} MHz\033[0m")
+            else:
+                print(f"\033[1;33m[INIT] Could not read frequency, using default\033[0m")
             
-            # Read response if available
-            if ser.in_waiting > 0:
-                response = ser.read(ser.in_waiting)
-                if b'FA' in response:
-                    # Extract frequency from response
-                    fa_start = response.find(b'FA') + 2
-                    fa_end = response.find(b';', fa_start)
-                    if fa_end > fa_start:
-                        freq_str = response[fa_start:fa_end].decode('utf-8')
-                        if freq_str.isdigit() and len(freq_str) >= 8:
-                            radio_state['vfo_a_freq'] = freq_str.ljust(11, '0')[:11]
-                            freq_mhz = float(freq_str) / 1000000.0
-                            print(f"\033[1;32m[INIT] Current frequency: {freq_mhz:.3f} MHz\033[0m")
-            
-            # Query current mode
-            ser.write(b";MD;")
-            ser.flush()
-            time.sleep(0.1)
-            
-            if ser.in_waiting > 0:
-                response = ser.read(ser.in_waiting)
-                if b'MD' in response:
-                    md_start = response.find(b'MD') + 2
-                    md_end = response.find(b';', md_start)
-                    if md_end > md_start:
-                        mode_str = response[md_start:md_end].decode('utf-8')
-                        if mode_str.isdigit():
-                            radio_state['mode'] = mode_str
-                            mode_names = {'1': 'LSB', '2': 'USB', '3': 'CW', '4': 'FM', '5': 'AM'}
-                            mode_name = mode_names.get(mode_str, f'Mode {mode_str}')
-                            print(f"\033[1;32m[INIT] Current mode: {mode_name}\033[0m")
+            # Query current mode using new helper function
+            mode_resp = query_radio("MD")
+            if mode_resp and mode_resp.startswith(b"MD"):
+                radio_state['mode'] = mode_resp[2:-1].decode()[:1]
+                mode_names = {'1': 'LSB', '2': 'USB', '3': 'CW', '4': 'FM', '5': 'AM'}
+                mode_name = mode_names.get(radio_state['mode'], f'Mode {radio_state["mode"]}')
+                print(f"\033[1;32m[INIT] Current mode: {mode_name}\033[0m")
+            else:
+                print(f"\033[1;33m[INIT] Could not read mode, using default\033[0m")
                             
         except Exception as e:
             print(f"\033[1;33m[INIT] Could not read radio settings: {e}\033[0m")
