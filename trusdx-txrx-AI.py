@@ -118,8 +118,7 @@ def show_persistent_header():
     print(f"\033[1;36mtruSDX-AI Driver v{VERSION}\033[0m - \033[1;33m{BUILD_DATE}\033[0m")
     print(f"\033[1;37mConnections for WSJT-X/JS8Call:\033[0m")
     print(f"\033[1;35m  Radio:\033[0m Kenwood TS-480 | \033[1;35mPort:\033[0m {PERSISTENT_PORTS['cat_port']} | \033[1;35mBaud:\033[0m 115200 | \033[1;35mPoll:\033[0m 80ms")
-    freq_mhz = float(radio_state['vfo_a_freq']) / 1000000.0
-    print(f"\033[1;35m  Audio:\033[0m {PERSISTENT_PORTS['audio_device']} (Input/Output) | \033[1;35mFreq:\033[0m {freq_mhz:.3f} MHz | \033[1;35mPTT:\033[0m CAT")
+    print(f"\033[1;35m  Audio:\033[0m {PERSISTENT_PORTS['audio_device']} (Input/Output) | \033[1;35mPTT:\033[0m CAT | \033[1;35mStatus:\033[0m Ready")
     print("\033[1;32m" + "="*80 + "\033[0m")  # Green header line
     print()
     # Set scrolling region to start after header (lines 7 onwards)
@@ -378,42 +377,11 @@ def handle_ts480_command(cmd, ser):
                     refresh_header_only()
                     return None  # Forward to radio
             else:
-                # Read VFO A frequency - ALWAYS query radio for actual frequency
-                print(f"\033[1;36m[DEBUG] JS8Call requesting frequency - reading from radio\033[0m")
-                try:
-                    # Clear buffer and query radio directly
-                    if ser.in_waiting > 0:
-                        ser.read(ser.in_waiting)
-                    
-                    ser.write(b";FA;")
-                    ser.flush()
-                    time.sleep(0.3)  # Wait for response
-                    
-                    if ser.in_waiting > 0:
-                        response = ser.read(ser.in_waiting)
-                        print(f"\033[1;36m[DEBUG] Radio frequency response: {response}\033[0m")
-                        
-                        if response.startswith(b"FA") and len(response) >= 15:
-                            actual_freq = response[2:-1].decode().ljust(11,'0')[:11]
-                            if actual_freq != '00000000000':  # Valid frequency
-                                radio_state['vfo_a_freq'] = actual_freq
-                                freq_mhz = float(actual_freq) / 1000000.0
-                                print(f"\033[1;32m[CAT] ✅ Read actual frequency: {freq_mhz:.3f} MHz\033[0m")
-                                refresh_header_only()
-                                return f'FA{actual_freq};'.encode('utf-8')
-                            else:
-                                print(f"\033[1;33m[CAT] Invalid frequency from radio: {actual_freq}\033[0m")
-                        else:
-                            print(f"\033[1;31m[CAT] Invalid response format: {response}\033[0m")
-                    else:
-                        print(f"\033[1;33m[CAT] No response from radio\033[0m")
-                        
-                except Exception as e:
-                    print(f"\033[1;31m[CAT] Error reading frequency: {e}\033[0m")
-                
-                # Fallback to current state if reading failed
+                # Read VFO A frequency - return current state
+                print(f"\033[1;36m[DEBUG] JS8Call requesting frequency\033[0m")
                 freq = radio_state['vfo_a_freq'].ljust(11, '0')[:11]
-                print(f"\033[1;33m[CAT] Fallback: returning {float(freq)/1000000:.3f} MHz\033[0m")
+                freq_mhz = float(freq) / 1000000.0
+                print(f"\033[1;32m[CAT] ✅ Returning frequency: {freq_mhz:.3f} MHz\033[0m")
                 return f'FA{freq};'.encode('utf-8')
                 
         elif cmd_str.startswith('FB'):
