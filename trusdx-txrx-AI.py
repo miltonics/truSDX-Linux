@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # de SQ3SWF, PE1NNZ 2023
 # Enhanced AI version with Kenwood TS-480 CAT interface and persistent serial ports
-# Version: 1.1.7-AI-PTT-FIXED (2024-06-11)
+# Version: 1.1.8-AI-TX0-FREQ-FIXED (2025-06-23)
 
 # Linux:
 # sudo apt install portaudio19-dev
@@ -49,9 +49,9 @@ import json
 from sys import platform
 
 # Version information
-VERSION = "1.1.6-AI-VU-WORKING"
-BUILD_DATE = "2024-06-10"
-AUTHOR = "SQ3SWF, PE1NNZ, AI-Enhanced - VU METER WORKING"
+VERSION = "1.1.8-AI-TX0-FREQ-FIXED"
+BUILD_DATE = "2025-06-23"
+AUTHOR = "SQ3SWF, PE1NNZ, AI-Enhanced - TX0 & FREQ FIXED"
 COMPATIBLE_PROGRAMS = ["WSJT-X", "JS8Call", "FlDigi", "Winlink"]
 
 audio_tx_rate_trusdx = 4800
