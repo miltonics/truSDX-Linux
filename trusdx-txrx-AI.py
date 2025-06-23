@@ -911,35 +911,75 @@ def run():
         
         # CRITICAL: Read actual frequency from radio BEFORE JS8Call connects
         print(f"\033[1;33m[INIT] Reading actual frequency from radio...\033[0m")
-        try:
-            # Clear any pending data
-            if ser.in_waiting > 0:
-                ser.read(ser.in_waiting)
-            
-            # Query frequency from radio
-            ser.write(b";FA;")
-            ser.flush()
-            time.sleep(0.5)  # Wait longer for response
-            
-            if ser.in_waiting > 0:
-                response = ser.read(ser.in_waiting)
-                print(f"\033[1;36m[DEBUG] Raw radio response: {response}\033[0m")
+        
+        freq_success = False
+        for attempt in range(3):  # Try 3 times with different delays
+            try:
+                print(f"\033[1;36m[INIT] Frequency reading attempt {attempt + 1}/3...\033[0m")
                 
-                if response.startswith(b"FA") and len(response) >= 15:
-                    actual_freq = response[2:-1].decode().ljust(11,'0')[:11]
-                    if actual_freq != '00000000000':  # Valid frequency
-                        radio_state['vfo_a_freq'] = actual_freq
-                        freq_mhz = float(actual_freq) / 1000000.0
-                        print(f"\033[1;32m[INIT] ✅ Read actual frequency: {freq_mhz:.3f} MHz\033[0m")
+                # Clear any pending data
+                if ser.in_waiting > 0:
+                    old_data = ser.read(ser.in_waiting)
+                    print(f"\033[1;33m[DEBUG] Cleared old data: {old_data}\033[0m")
+                
+                # Send frequency query
+                ser.write(b";FA;")
+                ser.flush()
+                print(f"\033[1;36m[DEBUG] Sent FA command to radio\033[0m")
+                
+                # Wait with increasing delay
+                wait_time = 0.5 + (attempt * 0.3)  # 0.5s, 0.8s, 1.1s
+                time.sleep(wait_time)
+                
+                # Check for response
+                if ser.in_waiting > 0:
+                    response = ser.read(ser.in_waiting)
+                    print(f"\033[1;36m[DEBUG] Raw radio response: {response}\033[0m")
+                    
+                    # Look for FA response in the data
+                    if b'FA' in response:
+                        # Find FA response
+                        fa_start = response.find(b'FA')
+                        fa_data = response[fa_start:]
+                        
+                        # Look for the semicolon that ends the command
+                        if b';' in fa_data:
+                            fa_end = fa_data.find(b';')
+                            fa_response = fa_data[:fa_end + 1]
+                            print(f"\033[1;36m[DEBUG] Extracted FA response: {fa_response}\033[0m")
+                            
+                            if len(fa_response) >= 13:  # FA + 11 digits + ;
+                                try:
+                                    actual_freq = fa_response[2:-1].decode().ljust(11,'0')[:11]
+                                    if actual_freq != '00000000000' and actual_freq.isdigit():
+                                        radio_state['vfo_a_freq'] = actual_freq
+                                        freq_mhz = float(actual_freq) / 1000000.0
+                                        print(f"\033[1;32m[INIT] ✅ Successfully read frequency: {freq_mhz:.3f} MHz\033[0m")
+                                        freq_success = True
+                                        break
+                                    else:
+                                        print(f"\033[1;33m[INIT] Invalid frequency data: {actual_freq}\033[0m")
+                                except Exception as decode_error:
+                                    print(f"\033[1;31m[INIT] Error decoding frequency: {decode_error}\033[0m")
+                            else:
+                                print(f"\033[1;33m[INIT] FA response too short: {fa_response}\033[0m")
+                        else:
+                            print(f"\033[1;33m[INIT] No semicolon found in FA data: {fa_data}\033[0m")
                     else:
-                        print(f"\033[1;33m[INIT] Radio returned invalid frequency: {actual_freq}\033[0m")
+                        print(f"\033[1;33m[INIT] No FA command found in response: {response}\033[0m")
                 else:
-                    print(f"\033[1;33m[INIT] Invalid frequency response: {response}\033[0m")
-            else:
-                print(f"\033[1;33m[INIT] No response from radio to frequency query\033[0m")
-                
-        except Exception as e:
-            print(f"\033[1;31m[INIT] Error reading frequency: {e}\033[0m")
+                    print(f"\033[1;33m[INIT] No response from radio (attempt {attempt + 1})\033[0m")
+                    
+            except Exception as e:
+                print(f"\033[1;31m[INIT] Error in frequency reading attempt {attempt + 1}: {e}\033[0m")
+            
+            if not freq_success and attempt < 2:
+                print(f"\033[1;33m[INIT] Retrying in 1 second...\033[0m")
+                time.sleep(1)
+        
+        if not freq_success:
+            print(f"\033[1;31m[INIT] ❌ Failed to read frequency after 3 attempts\033[0m")
+            print(f"\033[1;33m[INIT] Using fallback frequency: {float(radio_state['vfo_a_freq'])/1000000:.3f} MHz\033[0m")
         
         # Show what frequency we'll report to JS8Call
         current_freq = float(radio_state['vfo_a_freq']) / 1000000.0
