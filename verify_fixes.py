@@ -41,9 +41,11 @@ def check_frequency_reading():
         print("   ❌ query_radio function missing")
         return False
     
-    # Check for frequency initialization
-    if 'freq_resp = query_radio("FA"' in content:
-        print("   ✅ Frequency reading code found")
+    # Check for frequency reading in CAT forwarding (new approach)
+    if 'd.startswith(b"FA") and len(d) == 4' in content:
+        print("   ✅ Frequency reading code found (CAT forwarding)")
+    elif 'freq_resp = query_radio("FA"' in content:
+        print("   ✅ Frequency reading code found (direct query)")
     else:
         print("   ❌ Frequency reading code missing")
         return False
