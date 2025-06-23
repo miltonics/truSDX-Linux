@@ -378,8 +378,42 @@ def handle_ts480_command(cmd, ser):
                     refresh_header_only()
                     return None  # Forward to radio
             else:
-                # Read VFO A frequency - always return current radio state
+                # Read VFO A frequency - ALWAYS query radio for actual frequency
+                print(f"\033[1;36m[DEBUG] JS8Call requesting frequency - reading from radio\033[0m")
+                try:
+                    # Clear buffer and query radio directly
+                    if ser.in_waiting > 0:
+                        ser.read(ser.in_waiting)
+                    
+                    ser.write(b";FA;")
+                    ser.flush()
+                    time.sleep(0.3)  # Wait for response
+                    
+                    if ser.in_waiting > 0:
+                        response = ser.read(ser.in_waiting)
+                        print(f"\033[1;36m[DEBUG] Radio frequency response: {response}\033[0m")
+                        
+                        if response.startswith(b"FA") and len(response) >= 15:
+                            actual_freq = response[2:-1].decode().ljust(11,'0')[:11]
+                            if actual_freq != '00000000000':  # Valid frequency
+                                radio_state['vfo_a_freq'] = actual_freq
+                                freq_mhz = float(actual_freq) / 1000000.0
+                                print(f"\033[1;32m[CAT] ✅ Read actual frequency: {freq_mhz:.3f} MHz\033[0m")
+                                refresh_header_only()
+                                return f'FA{actual_freq};'.encode('utf-8')
+                            else:
+                                print(f"\033[1;33m[CAT] Invalid frequency from radio: {actual_freq}\033[0m")
+                        else:
+                            print(f"\033[1;31m[CAT] Invalid response format: {response}\033[0m")
+                    else:
+                        print(f"\033[1;33m[CAT] No response from radio\033[0m")
+                        
+                except Exception as e:
+                    print(f"\033[1;31m[CAT] Error reading frequency: {e}\033[0m")
+                
+                # Fallback to current state if reading failed
                 freq = radio_state['vfo_a_freq'].ljust(11, '0')[:11]
+                print(f"\033[1;33m[CAT] Fallback: returning {float(freq)/1000000:.3f} MHz\033[0m")
                 return f'FA{freq};'.encode('utf-8')
                 
         elif cmd_str.startswith('FB'):
