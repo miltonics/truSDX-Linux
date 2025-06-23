@@ -111,8 +111,9 @@ def clear_screen():
 
 def show_persistent_header():
     """Display persistent header with version and connection info"""
-    # Move cursor to top and clear only if needed
-    print("\033[H", end="")  # Move cursor to top
+    # Setup screen with scrolling region
+    print("\033[2J", end="")  # Clear entire screen
+    print("\033[H", end="")   # Move cursor to home position
     print("\033[1;32m" + "="*80 + "\033[0m")  # Green header line
     print(f"\033[1;36mtruSDX-AI Driver v{VERSION}\033[0m - \033[1;33m{BUILD_DATE}\033[0m")
     print(f"\033[1;37mConnections for WSJT-X/JS8Call:\033[0m")
@@ -121,6 +122,9 @@ def show_persistent_header():
     print(f"\033[1;35m  Audio:\033[0m {PERSISTENT_PORTS['audio_device']} (Input/Output) | \033[1;35mFreq:\033[0m {freq_mhz:.3f} MHz | \033[1;35mPTT:\033[0m CAT")
     print("\033[1;32m" + "="*80 + "\033[0m")  # Green header line
     print()
+    # Set scrolling region to start after header (lines 7 onwards)
+    print("\033[7;24r", end="")  # Set scrolling region from line 7 to 24
+    print("\033[7;1H", end="")   # Move cursor to line 7
 
 def refresh_header_only():
     """Refresh just the header without clearing screen"""
@@ -763,9 +767,9 @@ def run():
         create_persistent_serial_ports()
 
         if platform == "linux" or platform == "linux2":
-           # For Linux with PipeWire/PulseAudio, we need to use "pulse" device
-           virtual_audio_dev_out = "pulse"  # Use PulseAudio as output (will connect to TRUSDX sink)
-           virtual_audio_dev_in  = "pulse"  # Use PulseAudio as input (will connect to TRUSDX monitor)
+           # Use empty string for default audio devices - this is what worked in 1.1.6
+           virtual_audio_dev_out = ""#"TRUSDX"
+           virtual_audio_dev_in  = ""#"TRUSDX"
            trusdx_serial_dev     = "USB Serial"
            loopback_serial_dev   = ""
            cat_serial_dev        = ""
