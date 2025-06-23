@@ -277,8 +277,8 @@ def query_radio(cmd, retries=3, timeout=0.2):
 
 # Radio state variables for consistent responses
 radio_state = {
-    'vfo_a_freq': '00014074000',  # Will be read from radio at startup
-    'vfo_b_freq': '00014074000',  # Will be read from radio at startup
+    'vfo_a_freq': '00007074000',  # Default to 40m (7.074 MHz) instead of 20m
+    'vfo_b_freq': '00007074000',  # Default to 40m (7.074 MHz) instead of 20m
     'mode': '2',                  # Will be read from radio at startup
     'rx_vfo': '0',               # VFO A
     'tx_vfo': '0',               # VFO A
