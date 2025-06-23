@@ -1,155 +1,79 @@
-# truSDX-AI Driver for Linux
+# TruSDX Linux Driver for JS8Call
 
-**Version:** 1.1.7-AI-PTT-FIXED  
-**Date:** 2024-06-11
-**Authors:** SQ3SWF, PE1NNZ, AI-Enhanced  
-**Status:** ✅ PROVEN WORKING - Contact Made!
-
-## Overview
-
-This is an enhanced AI-optimized driver for the truSDX transceiver that provides full Kenwood TS-480 CAT emulation and audio interface for Linux systems. It has been tested and proven working with successful contacts made.
+A Python-based CAT interface driver that enables seamless integration between the TruSDX QRP transceiver and JS8Call on Linux systems.
 
 ## Features
 
-- ✅ **Full Kenwood TS-480 CAT Emulation** - Perfect compatibility with WSJT-X, JS8Call, FLDigi
-- ✅ **Working VU Meter** - Audio levels display correctly in WSJT-X
-- ✅ **Frequency Control** - Band/frequency changes work correctly
-- ✅ **PTT Control** - Both CAT and RTS/DTR PTT methods supported
-- ✅ **Audio Streaming** - Bi-directional audio with proper routing
-- ✅ **Persistent Ports** - Consistent `/tmp/trusdx_cat` port for easy setup
-- ✅ **Auto-Configuration** - Automatic audio device setup
+- **Automatic Frequency Detection**: Reads current radio frequency at startup
+- **TX/RX Control**: Handles transmission switching for JS8Call
+- **VU Meter Support**: Visual transmission feedback during operation  
+- **CAT Command Forwarding**: Transparent command passing between JS8Call and radio
+- **Robust Error Handling**: Multiple retry attempts with comprehensive debugging
+- **Auto-detection**: Automatically finds TruSDX USB device
 
 ## Quick Start
 
-1. **Connect your truSDX** via USB to your Linux computer
-
-2. **Download and extract** this folder to your desired location
-
-3. **Run the setup script:**
+1. **Install dependencies:**
    ```bash
-   cd "Trusdx Linux"
    chmod +x setup.sh
    ./setup.sh
    ```
 
-4. **Start the driver:**
+2. **Run the driver:**
    ```bash
-   ./trusdx-txrx-AI.py
+   python3 trusdx-txrx-AI.py
    ```
 
-5. **Configure WSJT-X:**
-   - Radio: **Kenwood TS-480**
-   - Serial Port: **/tmp/trusdx_cat**
-   - Baud Rate: **115200**
-   - Audio Input: **Monitor of TRUSDX**
-   - Audio Output: **TRUSDX**
-   - PTT Method: **CAT**
-   - Poll Interval: **80ms**
+3. **Configure JS8Call:**
+   - Set CAT control to use TCP/IP connection
+   - Host: `localhost` 
+   - Port: `4532`
 
-## System Requirements
+## Requirements
 
-- Linux (tested on Ubuntu, Debian, Mint)
 - Python 3.6+
-- PulseAudio
-- USB port for truSDX connection
-- Internet connection for initial setup
+- TruSDX transceiver connected via USB
+- JS8Call software
+- Linux system with USB permissions
 
-## Supported Software
+## Installation
 
-- WSJT-X (recommended)
-- JS8Call
-- FLDigi
-- Winlink
-- Any software supporting Kenwood TS-480 CAT protocol
+See `INSTALL.txt` for detailed installation instructions.
 
-## Command Line Options
+## Usage
 
-```bash
-./trusdx-txrx-AI.py [options]
+See `USAGE.md` for quick usage guide and troubleshooting tips.
 
-Options:
-  -v, --verbose         Enable verbose logging
-  --vox                 Enable VOX (audio-triggered PTT)
-  --unmute              Enable truSDX audio output
-  --direct              Use system audio (no virtual devices)
-  --no-rtsdtr           Disable RTS/DTR PTT
-  -B N, --block-size N  Set RX block size (default: 512)
-  -T N, --tx-block-size N Set TX block size (default: 48)
-  --no-header           Skip version display on startup
-```
+## Contributing
 
-## Troubleshooting
+This project is open source and welcomes contributions! Feel free to:
+- Report bugs and issues
+- Submit feature requests
+- Create pull requests
+- Improve documentation
 
-### Audio Issues
-- Run `pavucontrol` to verify TRUSDX devices exist
-- Check Recording tab: WSJT-X should use "Monitor of TRUSDX"
-- Check Playbook tab: WSJT-X should use "TRUSDX"
-- If VU meter shows no activity, restart the driver
+## Development
 
-### Serial Port Issues
-- Ensure truSDX is connected via USB
-- Check `dmesg | tail` for USB device detection
-- Verify `/tmp/trusdx_cat` exists when driver is running
-- Try unplugging/reconnecting truSDX
+The project includes comprehensive testing and debugging tools. Development files are available in the repository history.
 
-### Permission Issues
-- Add user to dialout group: `sudo usermod -a -G dialout $USER`
-- Log out and back in after group change
-- Don't run the driver as root/sudo
+## Hardware Compatibility
 
-### CAT Control Issues
-- Ensure Poll Interval is set to 80ms in WSJT-X
-- Try different baud rates if needed (38400, 57600, 115200)
-- Check that no other software is using the CAT port
-
-## Technical Details
-
-### Audio Architecture
-- Creates virtual PulseAudio sink "TRUSDX"
-- RX: truSDX → Driver → TRUSDX sink → WSJT-X
-- TX: WSJT-X → TRUSDX sink → Driver → truSDX
-- Sample rates: 11520 Hz TX, 7812 Hz RX
-
-### CAT Protocol
-- Emulates Kenwood TS-480 command set
-- Handles 95+ CAT commands locally
-- Forwards frequency/mode changes to hardware
-- Maintains state consistency
-
-### File Locations
-- CAT Port: `/tmp/trusdx_cat`
-- Config: `~/.config/trusdx-ai.json`
-- PulseAudio: `~/.config/pulse/default.pa`
-
-## Known Working Configurations
-
-| Software | Version | Status | Notes |
-|----------|---------|--------|---------|
-| WSJT-X | 2.6.x | ✅ Working | Recommended settings above |
-| JS8Call | 2.2.x | ✅ Working | Same as WSJT-X settings |
-| FLDigi | 4.1.x | ✅ Working | Use Kenwood TS-480 profile |
-
-## Version History
-
-- **v1.1.6-AI-VU-WORKING** - Fixed frequency control, proven working with contacts
-- **v1.1.5** - Enhanced VU meter functionality
-- **v1.1.0** - Added persistent ports and improved CAT emulation
-- **v1.0.x** - Initial AI enhancements
+Tested and working with:
+- TruSDX QRP Transceiver
+- Linux systems (Ubuntu, Mint, Debian)
+- JS8Call v2.2+
 
 ## Support
 
-For issues, questions, or improvements:
-1. Check this README first
-2. Run with `--verbose` flag for detailed logging
-3. Post on the truSDX forum with log output
-4. Include your Linux distribution and software versions
+If you encounter issues:
+1. Check the troubleshooting section in `USAGE.md`
+2. Review the detailed logs the script provides
+3. Open an issue on GitHub with your configuration details
 
-## License
+## Acknowledgments
 
-Based on original work by SQ3SWF and PE1NNZ. Enhanced with AI assistance.
-Distributed under original license terms.
+Thanks to the amateur radio community and JS8Call developers for their excellent software that makes digital communications accessible to everyone.
 
 ---
 
-**Happy DXing! 73**
-
+**73 de Milton**
