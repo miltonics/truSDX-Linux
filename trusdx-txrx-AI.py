@@ -687,7 +687,7 @@ def handle_cat(pastream, ser, cat):
                     time.sleep(0.001)
                     continue
                 
-        # Forward to radio if not handled locally
+                # Forward to radio if not handled locally
                 if status[0]:
                     tx_cat_delay(ser)
                     ser.write(b";")  # in TX mode, interrupt CAT stream by sending ; before issuing CAT cmd
@@ -698,9 +698,23 @@ def handle_cat(pastream, ser, cat):
                 ser.flush()
                 print(f"\033[1;33m[FWD] \033[0m{d.decode('utf-8', errors='ignore').strip()} \033[1;31m→ truSDX\033[0m")
                 
-                # Update header if frequency changed
-                if d.startswith(b"FA") and len(d) > 3:
-                    refresh_header_only()
+                # For frequency queries, we need to wait for and capture the response
+                if d.startswith(b"FA") and len(d) == 4:  # Frequency query (not set)
+                    # Read the response from the radio
+                    time.sleep(0.1)  # Give radio time to respond
+                    if ser.in_waiting > 0:
+                        response = ser.read(ser.in_waiting)
+                        if response.startswith(b"FA") and len(response) >= 15:
+                            new_freq = response[2:-1].decode().ljust(11,'0')[:11]
+                            radio_state['vfo_a_freq'] = new_freq
+                            freq_mhz = float(new_freq) / 1000000.0
+                            print(f"\033[1;32m[FREQ] ✅ Updated frequency: {freq_mhz:.3f} MHz\033[0m")
+                            refresh_header_only()
+                            # Forward the response to CAT client
+                            cat.write(response)
+                            cat.flush()
+                        else:
+                            print(f"\033[1;33m[FREQ] No valid response from radio\033[0m")
                 
                 if d.startswith(b"TX"):
                    status[0] = True
@@ -864,71 +878,21 @@ def run():
         #ser.rts = False
         time.sleep(3) # wait for device to start after opening serial port
         
-        # Initialize radio - send basic setup commands first
+        # Initialize radio with basic commands like the working 1.1.6 version
+        print(f"\033[1;33m[INIT] Initializing radio communication...\033[0m")
         try:
-            ser.write(b";AI2;")  # Enable auto information
+            # Send basic initialization commands (like working 1.1.6)
+            init_cmd = b";MD2;UA2;" if not config['unmute'] else b";MD2;UA1;"
+            ser.write(init_cmd)  # enable audio streaming, set USB mode
             ser.flush()
-            time.sleep(0.2)
+            time.sleep(0.5)  # Give radio time to process
+            print(f"\033[1;32m[INIT] ✅ Radio initialized with basic commands\033[0m")
         except Exception as e:
-            log(f"Error setting AI mode: {e}")
+            print(f"\033[1;31m[INIT] Error initializing radio: {e}\033[0m")
         
-        # Read current radio settings at startup
-        print(f"\033[1;33m[INIT] Reading current radio settings...\033[0m")
-        
-        # Try multiple times with longer delays for frequency reading
-        freq_success = False
-        for attempt in range(5):  # Try up to 5 times
-            try:
-                print(f"\033[1;36m[INIT] Frequency reading attempt {attempt + 1}/5...\033[0m")
-                
-                # Query current frequency with longer timeout and more retries
-                freq_resp = query_radio("FA", retries=5, timeout=0.5)
-                if freq_resp and freq_resp.startswith(b"FA") and len(freq_resp) >= 15:
-                    new_freq = freq_resp[2:-1].decode().ljust(11,'0')[:11]
-                    # Validate frequency is reasonable (not all zeros or default)
-                    if new_freq != '00000000000' and new_freq != '00014074000':
-                        radio_state['vfo_a_freq'] = new_freq
-                        freq_mhz = float(radio_state['vfo_a_freq']) / 1000000.0
-                        print(f"\033[1;32m[INIT] ✅ Current frequency: {freq_mhz:.3f} MHz\033[0m")
-                        freq_success = True
-                        break
-                    elif new_freq == '00014074000':
-                        print(f"\033[1;33m[INIT] Radio reports 14.074 MHz - may be default or actual\033[0m")
-                        radio_state['vfo_a_freq'] = new_freq
-                        freq_mhz = float(radio_state['vfo_a_freq']) / 1000000.0
-                        print(f"\033[1;32m[INIT] Using frequency: {freq_mhz:.3f} MHz\033[0m")
-                        freq_success = True
-                        break
-                    else:
-                        print(f"\033[1;33m[INIT] Invalid frequency response: {new_freq}\033[0m")
-                else:
-                    print(f"\033[1;33m[INIT] No valid frequency response (attempt {attempt + 1})\033[0m")
-                
-                if attempt < 4:  # Don't sleep after last attempt
-                    time.sleep(1)  # Wait longer between attempts
-                    
-            except Exception as e:
-                print(f"\033[1;31m[INIT] Error reading frequency (attempt {attempt + 1}): {e}\033[0m")
-                if attempt < 4:
-                    time.sleep(1)
-        
-        if not freq_success:
-            print(f"\033[1;33m[INIT] Could not read frequency after 5 attempts, using default 14.074 MHz\033[0m")
-        
-        # Query current mode
-        try:
-            mode_resp = query_radio("MD", retries=3, timeout=0.5)
-            if mode_resp and mode_resp.startswith(b"MD"):
-                radio_state['mode'] = mode_resp[2:-1].decode()[:1]
-                mode_names = {'1': 'LSB', '2': 'USB', '3': 'CW', '4': 'FM', '5': 'AM'}
-                mode_name = mode_names.get(radio_state['mode'], f'Mode {radio_state["mode"]}')
-                print(f"\033[1;32m[INIT] ✅ Current mode: {mode_name}\033[0m")
-            else:
-                print(f"\033[1;33m[INIT] Could not read mode, using default USB\033[0m")
-        except Exception as e:
-            print(f"\033[1;33m[INIT] Error reading mode: {e}\033[0m")
-        
-        ser.write(b";MD2;UA2;" if not config['unmute'] else b";MD2;UA1;") # enable audio streaming, mute trusdx
+        # Note: Frequency will be read automatically when WSJT-X queries it
+        # This approach follows the working 1.1.6 method
+        print(f"\033[1;36m[INIT] Radio frequency will be read when first queried by CAT client\033[0m")
         #status[1] = True
 
         threading.Thread(target=receive_serial_audio, args=(ser,ser2,out_stream)).start()
