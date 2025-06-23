@@ -358,45 +358,42 @@ def handle_ts480_command(cmd, ser):
             if len(cmd_str) > 2:
                 # Set VFO A frequency - but first check if this is JS8Call's default
                 freq = cmd_str[2:13].ljust(11, '0')[:11]  # Ensure exactly 11 digits
+                freq_mhz = float(freq) / 1000000.0
                 
-                # Don't accept JS8Call's default 14.074 MHz - read from radio instead
-                if freq == '00014074000':
-                    print(f"\033[1;33m[CAT] JS8Call tried to set 14.074 MHz - reading actual frequency from radio\033[0m")
+                print(f"\033[1;31m[DEBUG] JS8Call trying to SET frequency: {freq} ({freq_mhz:.3f} MHz)\033[0m")
+                print(f"\033[1;31m[DEBUG] Full command: {cmd_str}\033[0m")
+                
+                # Don't accept any frequency SET commands from JS8Call - always read from radio instead
+                print(f"\033[1;33m[CAT] Blocking frequency SET command - reading actual frequency from radio\033[0m")
+                
+                # Try to read actual frequency from radio
+                try:
+                    # Send frequency query to radio
+                    ser.write(b";FA;")
+                    ser.flush()
+                    time.sleep(0.2)  # Wait for response
                     
-                    # Try to read actual frequency from radio
-                    try:
-                        # Send frequency query to radio
-                        ser.write(b";FA;")
-                        ser.flush()
-                        time.sleep(0.2)  # Wait for response
-                        
-                        if ser.in_waiting > 0:
-                            response = ser.read(ser.in_waiting)
-                            if response.startswith(b"FA") and len(response) >= 15:
-                                actual_freq = response[2:-1].decode().ljust(11,'0')[:11]
-                                radio_state['vfo_a_freq'] = actual_freq
-                                freq_mhz = float(actual_freq) / 1000000.0
-                                print(f"\033[1;32m[CAT] ✅ Read actual frequency: {freq_mhz:.3f} MHz\033[0m")
-                                refresh_header_only()
-                                # Return the actual frequency to JS8Call
-                                return f'FA{actual_freq};'.encode('utf-8')
-                            else:
-                                print(f"\033[1;31m[CAT] ❌ Invalid response from radio: {response}\033[0m")
+                    if ser.in_waiting > 0:
+                        response = ser.read(ser.in_waiting)
+                        if response.startswith(b"FA") and len(response) >= 15:
+                            actual_freq = response[2:-1].decode().ljust(11,'0')[:11]
+                            radio_state['vfo_a_freq'] = actual_freq
+                            freq_mhz = float(actual_freq) / 1000000.0
+                            print(f"\033[1;32m[CAT] ✅ Read actual frequency: {freq_mhz:.3f} MHz\033[0m")
+                            refresh_header_only()
+                            # Return the actual frequency to JS8Call
+                            return f'FA{actual_freq};'.encode('utf-8')
                         else:
-                            print(f"\033[1;33m[CAT] ⚠️  No response from radio\033[0m")
-                    except Exception as e:
-                        print(f"\033[1;31m[CAT] Error reading frequency from radio: {e}\033[0m")
-                    
-                    # If reading failed, don't forward the 14.074 set command
-                    # Instead return current state
-                    freq = radio_state['vfo_a_freq'].ljust(11, '0')[:11]
-                    return f'FA{freq};'.encode('utf-8')
-                else:
-                    # Accept non-default frequency changes
-                    radio_state['vfo_a_freq'] = freq
-                    print(f"\033[1;36m[CAT] Frequency set to {float(freq)/1000000:.3f} MHz\033[0m")
-                    refresh_header_only()
-                    return None  # Forward to radio
+                            print(f"\033[1;31m[CAT] ❌ Invalid response from radio: {response}\033[0m")
+                    else:
+                        print(f"\033[1;33m[CAT] ⚠️  No response from radio\033[0m")
+                except Exception as e:
+                    print(f"\033[1;31m[CAT] Error reading frequency from radio: {e}\033[0m")
+                
+                # If reading failed, don't forward the frequency set command
+                # Instead return current state
+                freq = radio_state['vfo_a_freq'].ljust(11, '0')[:11]
+                return f'FA{freq};'.encode('utf-8')
             else:
                 # Read VFO A frequency - always return current radio state
                 freq = radio_state['vfo_a_freq'].ljust(11, '0')[:11]
