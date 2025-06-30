@@ -1,0 +1,61 @@
+TRUSDX-AI DRIVER - QUICK INSTALL GUIDE
+======================================
+
+PROVEN WORKING - CONTACT MADE!
+
+1. CONNECT TRUSDX
+   - Connect truSDX to computer via USB cable
+
+2. EXTRACT FILES
+   - Extract this folder to your desired location
+   - Open terminal in this folder
+
+3. RUN SETUP
+   - Make setup script executable: chmod +x setup.sh
+   - Run setup: ./setup.sh
+   - Enter password when prompted for sudo
+
+4. START DRIVER
+   - Run: ./trusdx-rxtx-AI.py
+   - Leave terminal open while using
+
+5. CONFIGURE WSJT-X
+   - Radio: Kenwood TS-480
+   - Serial Port: /tmp/trusdx_cat
+   - Baud: 115200
+   - Audio In: Monitor of TRUSDX
+   - Audio Out: TRUSDX
+   - PTT: CAT
+   - Poll: 80ms
+
+6. TEST
+   - Start WSJT-X
+   - Check VU meter shows activity
+   - Try changing frequency/band
+   - Make a contact!
+
+TROUBLESHOOTING:
+
+CH341 KERNEL MODULE:
+- Check if loaded: lsmod | grep ch341
+- Load manually: sudo modprobe ch341
+- Verify USB: dmesg | grep ch341
+
+PULSEAUDIO SINK:
+- Check exists: pactl list sinks short | grep TRUSDX
+- Create manually: pactl load-module module-null-sink sink_name=TRUSDX
+- Audio control: pavucontrol
+
+DIALOUT GROUP:
+- Check membership: groups $USER | grep dialout
+- Add to group: sudo usermod -a -G dialout $USER
+- IMPORTANT: Log out and back in after group change
+
+OTHER ISSUES:
+- No audio: Check pavucontrol routing
+- No CAT: Check USB connection, restart driver
+- Permission denied: Never run as root/sudo
+- For detailed help: run with --verbose flag
+
+Enjoy and 73!
+
