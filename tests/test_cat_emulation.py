@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 try:
     # Import from parent directory
     import importlib.util
-    spec = importlib.util.spec_from_file_location("trusdx_main", "../trusdx-rxtx-AI.py")
+    spec = importlib.util.spec_from_file_location("trusdx_main", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "trusdx-rxtx-AI.py"))
     trusdx_main = importlib.util.module_from_spec(spec)
     
     # Set up required globals for the main module

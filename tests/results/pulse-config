@@ -1,0 +1,3 @@
+# Headless PulseAudio configuration for testing
+autospawn = yes
+daemon-binary = /usr/bin/pulseaudio
