@@ -16,7 +16,7 @@ PROVEN WORKING - CONTACT MADE!
    - Enter password when prompted for sudo
 
 4. START DRIVER
-   - Run: ./trusdx-rxtx-AI.py
+   - Run: ./trusdx-rxtx-AI.py (or ./trusdx-txrx-AI.py - both are equivalent)
    - Leave terminal open while using
 
 5. CONFIGURE WSJT-X
@@ -52,8 +52,8 @@ DIALOUT GROUP:
 - IMPORTANT: Log out and back in after group change
 
 OTHER ISSUES:
-- No audio: Check pavucontrol routing
-- No CAT: Check USB connection, restart driver
+- No audio: Check pavucontrol routing, run 'pavucontrol'
+- No CAT: Check USB connection and restart driver
 - Permission denied: Never run as root/sudo
 - For detailed help: run with --verbose flag
 
