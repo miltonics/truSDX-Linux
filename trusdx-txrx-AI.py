@@ -407,6 +407,12 @@ def handle_ts480_command(cmd, ser):
     """Handle Kenwood TS-480 specific CAT commands with full emulation"""
     try:
         cmd_str = cmd.decode('utf-8').strip(';\r\n')
+        
+        # Extra verbose logging for VFO-related commands
+        if any(vfo_cmd in cmd_str.upper() for vfo_cmd in ['VFO', 'CV', 'V', 'FA', 'FB']):
+            if config.get('verbose', False):
+                print(f"\033[1;33m[VFO-DEBUG] Processing VFO/Freq command: '{cmd_str}'\033[0m")
+        
         log(f"Processing CAT command: {cmd_str}")
         
         # Empty command - ignore
@@ -468,11 +474,14 @@ def handle_ts480_command(cmd, ser):
             
             return response.encode('utf-8')
         
-# VFO query commands - critical for fixing "VFO None" error
+        # VFO query commands - critical for fixing "VFO None" error
         elif cmd_str == 'V':
-            # Get current VFO - return VFO A
-            # If all else fails, default to safe value
-            return f'V{radio_state.get("rx_vfo", "0")};'.encode('utf-8')
+            # Get current VFO - ensure we always return a valid VFO
+            current_vfo = radio_state.get('rx_vfo', '0')
+            vfo_response = f'V{current_vfo};'
+            if config.get('verbose', False):
+                print(f"\033[1;35m[VFO] V query - returning: {vfo_response}\033[0m")
+            return vfo_response.encode('utf-8')
         
         elif cmd_str.startswith('V'):
             if len(cmd_str) > 1:
@@ -491,8 +500,11 @@ def handle_ts480_command(cmd, ser):
         
         # Current VFO query - critical for Hamlib
         elif cmd_str == 'CV':
-            # Return current VFO (always VFO A)
-            return b'CV0;'
+            # Return current VFO (always VFO A) - this is what Hamlib needs to avoid "VFO None"
+            vfo_response = f'CV{radio_state.get("rx_vfo", "0")};'
+            if config.get('verbose', False):
+                print(f"\033[1;35m[VFO] CV query - returning: {vfo_response}\033[0m")
+            return vfo_response.encode('utf-8')
         
         # VFO Copy command
         elif cmd_str.startswith('CV'):
@@ -547,6 +559,18 @@ def handle_ts480_command(cmd, ser):
             else:
                 # Read AI mode
                 return f'AI{radio_state["ai_mode"]};'.encode('utf-8')
+        
+        # VFO selection before frequency operations - critical for Hamlib
+        elif cmd_str in ['VFOA', 'VFOB']:
+            # Hamlib may send VFOA/VFOB to select VFO before frequency query
+            if cmd_str == 'VFOA':
+                radio_state['rx_vfo'] = '0'
+                radio_state['tx_vfo'] = '0'
+                return b'VFOA;'
+            elif cmd_str == 'VFOB':
+                radio_state['rx_vfo'] = '1'
+                radio_state['tx_vfo'] = '1'
+                return b'VFOB;'
         
         # Frequency commands
         elif cmd_str.startswith('FA'):
