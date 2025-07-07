@@ -421,6 +421,11 @@ def handle_ts480_command(cmd, ser):
             
         # ID command - return TS-480 ID
         if cmd_str == 'ID':
+            # This is often the first command Hamlib sends - ensure VFO state is ready
+            radio_state['rx_vfo'] = '0'
+            radio_state['tx_vfo'] = '0'
+            if config.get('verbose', False):
+                print(f"\033[1;33m[HAMLIB] ID command - ensuring VFO A is active\033[0m")
             return b'ID020;'
         
         # IF command - return current status (critical for Hamlib)
@@ -429,7 +434,7 @@ def handle_ts480_command(cmd, ser):
             # TS-480 IF Format: IF<11-digit freq><5-digit RIT/XIT><RIT><XIT><Bank><RX/TX><Mode><VFO><Scan><Split><Tone><ToneFreq><CTCSS>;
             # Total: IF + 37 chars + ; = 40 characters
             
-            # Ensure all components are properly formatted
+            # CRITICAL: Always return VFO A (0) to fix "VFO None" error
             freq = radio_state['vfo_a_freq'][:11].zfill(11)          # 11 digits, zero-padded
             rit_xit = '00000'                                        # 5 digits - RIT/XIT offset (always 0)
             rit = '0'                                                # 1 digit - RIT on/off
@@ -437,7 +442,7 @@ def handle_ts480_command(cmd, ser):
             bank = '00'                                              # 2 digits - memory bank
             rxtx = '0'                                               # 1 digit (0=RX, 1=TX)
             mode = radio_state['mode'][:1].ljust(1, '2')             # 1 digit - mode (2=USB)
-            vfo = '0'                                                # 1 digit (0=VFO A, 1=VFO B) - Always VFO A
+            vfo = '0'                                                # 1 digit (0=VFO A, 1=VFO B) - ALWAYS VFO A
             scan = '0'                                               # 1 digit - scan on/off
             split = '0'                                              # 1 digit - split on/off
             tone = '0'                                               # 1 digit - tone on/off
@@ -452,35 +457,31 @@ def handle_ts480_command(cmd, ser):
             ans = '0'                                                # 1 digit - ANS
             nb = '0'                                                 # 1 digit - Noise blanker
             
-            # Build the 37-character content after IF
-            # Format: <11freq><5ritxit><1rit><1xit><2bank><1rxtx><1mode><1vfo><1scan><1split><1tone><2tonefreq><1ctcss><10 reserved/padding>
+            # Build the 37-character content after IF - strict format for Hamlib
             content = f'{freq}{rit_xit}{rit}{xit}{bank}{rxtx}{mode}{vfo}{scan}{split}{tone}{tone_freq}{ctcss}0000000'
             
             # Ensure exactly 37 characters
             content = content[:37].ljust(37, '0')
             response = f'IF{content};'
             
-            # Validate response length (should be exactly 40 characters)
-            if len(response) != 40:
-                # Fallback response that's known to work with Hamlib
-                vfo_freq = radio_state['vfo_a_freq'][:11].zfill(11)
-                response = f'IF{vfo_freq}0000000200000800000000;'
-                if len(response) != 40:
-                    response = 'IF000070740000000000200000800000000;'
+            # Force VFO A state in radio_state to ensure consistency
+            radio_state['rx_vfo'] = '0'
+            radio_state['tx_vfo'] = '0'
             
             # Debug: Log the IF response
             if config.get('verbose', False):
-                print(f"\033[1;32m[IF] Sending IF response: {response} (length: {len(response)})\033[0m")
+                print(f"\033[1;32m[IF] Sending IF response: {response} (length: {len(response)}) VFO={vfo}\033[0m")
             
             return response.encode('utf-8')
         
         # VFO query commands - critical for fixing "VFO None" error
         elif cmd_str == 'V':
-            # Get current VFO - ensure we always return a valid VFO
-            current_vfo = radio_state.get('rx_vfo', '0')
-            vfo_response = f'V{current_vfo};'
+            # ALWAYS return VFO A (0) to fix Hamlib VFO None issue
+            radio_state['rx_vfo'] = '0'
+            radio_state['tx_vfo'] = '0'
+            vfo_response = 'V0;'  # Force VFO A
             if config.get('verbose', False):
-                print(f"\033[1;35m[VFO] V query - returning: {vfo_response}\033[0m")
+                print(f"\033[1;35m[VFO] V query - FORCED VFO A: {vfo_response}\033[0m")
             return vfo_response.encode('utf-8')
         
         elif cmd_str.startswith('V'):
@@ -500,10 +501,12 @@ def handle_ts480_command(cmd, ser):
         
         # Current VFO query - critical for Hamlib
         elif cmd_str == 'CV':
-            # Return current VFO (always VFO A) - this is what Hamlib needs to avoid "VFO None"
-            vfo_response = f'CV{radio_state.get("rx_vfo", "0")};'
+            # FORCE VFO A to fix Hamlib "VFO None" error
+            radio_state['rx_vfo'] = '0'
+            radio_state['tx_vfo'] = '0'
+            vfo_response = 'CV0;'  # Always VFO A
             if config.get('verbose', False):
-                print(f"\033[1;35m[VFO] CV query - returning: {vfo_response}\033[0m")
+                print(f"\033[1;35m[VFO] CV query - FORCED VFO A: {vfo_response}\033[0m")
             return vfo_response.encode('utf-8')
         
         # VFO Copy command
@@ -766,6 +769,46 @@ def handle_ts480_command(cmd, ser):
                 else:
                     return b'UA2;'  # Muted
         
+        # FA command - VFO A frequency (critical for Hamlib)
+        elif cmd_str == 'FA':
+            # Return VFO A frequency - force VFO A
+            radio_state['rx_vfo'] = '0'
+            radio_state['tx_vfo'] = '0'
+            freq_response = f'FA{radio_state["vfo_a_freq"]};'
+            if config.get('verbose', False):
+                print(f"\033[1;36m[FREQ] FA query - VFO A freq: {freq_response}\033[0m")
+            return freq_response.encode('utf-8')
+        
+        elif cmd_str.startswith('FA') and len(cmd_str) > 2:
+            # Set VFO A frequency
+            new_freq = cmd_str[2:].ljust(11, '0')[:11]
+            radio_state['vfo_a_freq'] = new_freq
+            radio_state['rx_vfo'] = '0'  # Force VFO A
+            radio_state['tx_vfo'] = '0'
+            if config.get('verbose', False):
+                freq_mhz = float(new_freq) / 1000000.0
+                print(f"\033[1;36m[FREQ] FA set - VFO A freq: {freq_mhz:.3f} MHz\033[0m")
+            return None  # Forward to radio
+        
+        # FB command - VFO B frequency (but redirect to VFO A)
+        elif cmd_str == 'FB':
+            # Return VFO B frequency (same as VFO A for simplicity)
+            radio_state['rx_vfo'] = '0'  # Keep VFO A active
+            radio_state['tx_vfo'] = '0'
+            freq_response = f'FB{radio_state["vfo_b_freq"]};'
+            if config.get('verbose', False):
+                print(f"\033[1;36m[FREQ] FB query - VFO B freq: {freq_response}\033[0m")
+            return freq_response.encode('utf-8')
+        
+        elif cmd_str.startswith('FB') and len(cmd_str) > 2:
+            # Set VFO B frequency
+            new_freq = cmd_str[2:].ljust(11, '0')[:11]
+            radio_state['vfo_b_freq'] = new_freq
+            # Keep VFO A active
+            radio_state['rx_vfo'] = '0'
+            radio_state['tx_vfo'] = '0'
+            return None  # Forward to radio
+        
         # For unknown commands, don't return error - just ignore
         elif cmd_str:
             log(f"Unknown CAT command: {cmd_str} - ignoring")
@@ -834,20 +877,44 @@ def handle_rx_audio(ser, cat, pastream, d):
         else:
             if status[3]:               # only send something to cat port, when active
                 try:
-                    # Synchronize radio response transmission with same protection as emulated responses
-                    cat.reset_output_buffer()
-                    time.sleep(0.001)  # Brief pause to ensure buffer is actually clear
-                    cat.write(d)
-                    cat.flush()
+                    # CRITICAL FIX: Filter radio response to only send valid CAT responses
+                    # Only forward data that looks like valid CAT responses (ASCII text ending with ;)
+                    filtered_response = b''
                     
-                    if config.get('verbose', False):
-                        print(f"\033[1;35m[RADIO] Forwarded radio response: {d}\033[0m")
+                    # Check if this looks like a valid CAT response
+                    if d.endswith(b';') and len(d) > 1:
+                        # Filter out non-ASCII bytes
+                        is_valid_cat = True
+                        for byte in d[:-1]:  # Check all bytes except the final ';'
+                            if not (32 <= byte <= 126):  # Only allow printable ASCII
+                                is_valid_cat = False
+                                if config.get('verbose', False):
+                                    print(f"\033[1;31m[RADIO-FILTER] Dropping invalid byte 0x{byte:02x} in radio response\033[0m")
+                                break
+                        
+                        if is_valid_cat:
+                            filtered_response = d
+                    
+                    # Only send if we have a valid CAT response
+                    if filtered_response:
+                        # Synchronize radio response transmission with same protection as emulated responses
+                        cat.reset_output_buffer()
+                        time.sleep(0.001)  # Brief pause to ensure buffer is actually clear
+                        cat.write(filtered_response)
+                        cat.flush()
+                        
+                        if config.get('verbose', False):
+                            print(f"\033[1;35m[RADIO] Forwarded clean radio response: {filtered_response}\033[0m")
+                        
+                        log(f"O: {filtered_response}")  # in CAT command mode
+                    else:
+                        # Skip binary/audio data
+                        if config.get('verbose', False):
+                            print(f"\033[1;33m[RADIO-FILTER] Skipped binary/audio data (length: {len(d)})\033[0m")
                         
                 except Exception as cat_error:
                     log(f"CAT radio response write error: {cat_error}")
                     print(f"\033[1;31m[CAT ERROR] Failed to forward radio response: {cat_error}\033[0m")
-                    
-                log(f"O: {d}")  # in CAT command mode
             else:
                 log("Skip CAT response, as CAT is not active.")
 
@@ -968,6 +1035,29 @@ def handle_cat(pastream, ser, cat):
             status[3] = True
             log("CAT interface active")
             print("\033[1;32m[CAT] Interface activated\033[0m")
+            
+            # CRITICAL: Proactively send VFO initialization to Hamlib clients
+            # This ensures Hamlib knows the current VFO state before any queries
+            try:
+                # Force VFO A state by sending proactive responses
+                time.sleep(0.1)  # Give client time to initialize
+                
+                # Send current VFO status proactively
+                init_vfo_response = b'V0;'  # Current VFO is A
+                cat.write(init_vfo_response)
+                cat.flush()
+                print(f"\033[1;33m[INIT] 🚀 Proactively sent VFO state: {init_vfo_response}\033[0m")
+                
+                time.sleep(0.05)
+                
+                # Send IF status proactively 
+                init_if_response = b'IF0000707400000000000002000008000000000;'
+                cat.write(init_if_response)
+                cat.flush()
+                print(f"\033[1;33m[INIT] 🚀 Proactively sent IF state: {init_if_response}\033[0m")
+                
+            except Exception as init_error:
+                print(f"\033[1;31m[INIT] Warning: VFO init error: {init_error}\033[0m")
         
         try:
             # Read all available data
@@ -975,14 +1065,25 @@ def handle_cat(pastream, ser, cat):
             if not raw_data:
                 return
                 
-            print(f"\033[1;36m[DEBUG] Raw CAT data: {raw_data}\033[0m")
+            if config.get('verbose', False):
+                print(f"\033[1;36m[DEBUG] Raw CAT data: {raw_data}\033[0m")
             
             # Handle partial commands and buffering
             if not hasattr(handle_cat, 'buffer'):
                 handle_cat.buffer = b''
             
-            # Add new data to buffer
-            handle_cat.buffer += raw_data
+            # CRITICAL FIX: Filter out binary garbage and keep only valid CAT data
+            # CAT commands are ASCII text ending with ';' - filter out binary data
+            filtered_data = b''
+            for byte in raw_data:
+                # Keep only printable ASCII characters and semicolons
+                if 32 <= byte <= 126 or byte == ord(';'):
+                    filtered_data += bytes([byte])
+                elif config.get('verbose', False):
+                    print(f"\033[1;31m[FILTER] Dropped binary byte: 0x{byte:02x}\033[0m")
+            
+            # Add filtered data to buffer
+            handle_cat.buffer += filtered_data
             
             # Process complete commands (ending with ;)
             while b';' in handle_cat.buffer:

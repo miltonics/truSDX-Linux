@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Check Time Sync Status
+Comment=Check the current time synchronization status
+Exec=gnome-terminal -- /usr/local/bin/check-time-sync.sh
+Icon=preferences-system-time
+Terminal=true
+Categories=System;
+StartupNotify=true
