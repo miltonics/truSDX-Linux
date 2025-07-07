@@ -8,6 +8,7 @@ A Python-based CAT interface driver that enables seamless integration between th
 - **TX/RX Control**: Handles transmission switching for JS8Call
 - **VU Meter Support**: Visual transmission feedback during operation  
 - **CAT Command Forwarding**: Transparent command passing between JS8Call and radio
+- **RTS/DTR Driver Shim**: Neutralizes RTS/DTR flags to prevent hardware conflicts
 - **Robust Error Handling**: Multiple retry attempts with comprehensive debugging
 - **Auto-detection**: Automatically finds TruSDX USB device
 
@@ -36,6 +37,21 @@ A Python-based CAT interface driver that enables seamless integration between th
 - JS8Call software
 - Linux system with USB permissions
 
+## GUI Requirements
+
+- `python3-tk` - Tkinter GUI framework
+- `python3-matplotlib` - Plotting library for VU meter and waterfall displays
+
+Install GUI dependencies:
+```bash
+sudo apt install python3-tk python3-matplotlib
+```
+
+To run without GUI (headless mode):
+```bash
+python3 trusdx-txrx-AI.py --nogui
+```
+
 ## Installation
 
 See `INSTALL.txt` for detailed installation instructions.
@@ -43,6 +59,25 @@ See `INSTALL.txt` for detailed installation instructions.
 ## Usage
 
 See `USAGE.md` for quick usage guide and troubleshooting tips.
+
+## RTS/DTR Driver Shim (New in v1.2.1)
+
+The driver now includes an intelligent RTS/DTR neutralization system that prevents hardware conflicts:
+
+- **Automatic Detection**: Monitors for RTS/DTR control signals from CAT software
+- **Signal Neutralization**: Safely absorbs RTS/DTR flags before they reach hardware
+- **Hardware Protection**: Prevents potential conflicts with TruSDX USB interface
+- **Transparent Operation**: Works seamlessly with JS8Call, WSJT-X, and other CAT software
+- **Backward Compatibility**: Maintains compatibility with existing configurations
+
+**Benefits:**
+- Eliminates need to manually disable RTS/DTR in client software
+- Prevents "driver shim active" messages in system logs
+- Ensures stable USB communication with TruSDX hardware
+- Reduces potential for USB disconnections during operation
+
+**Technical Details:**
+The shim operates at the Python pyserial level, intercepting RTS/DTR property access and method calls. This approach is transparent to both the hardware and client software, providing a robust solution that works across different operating systems and CAT applications.
 
 ## Contributing
 

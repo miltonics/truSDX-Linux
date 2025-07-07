@@ -10,16 +10,21 @@ PROVEN WORKING - CONTACT MADE!
    - Extract this folder to your desired location
    - Open terminal in this folder
 
-3. RUN SETUP
+3. GUI REQUIREMENTS
+   - Install GUI packages: sudo apt install python3-tk python3-matplotlib
+   - Required for VU meter and waterfall displays
+   - Use --nogui flag to disable visuals if not needed
+
+4. RUN SETUP
    - Make setup script executable: chmod +x setup.sh
    - Run setup: ./setup.sh
    - Enter password when prompted for sudo
 
-4. START DRIVER
+5. START DRIVER
    - Run: ./trusdx-txrx-AI.py
    - Leave terminal open while using
 
-5. CONFIGURE WSJT-X
+6. CONFIGURE WSJT-X
    - Radio: Kenwood TS-480
    - Serial Port: /tmp/trusdx_cat
    - Baud: 115200
@@ -28,7 +33,7 @@ PROVEN WORKING - CONTACT MADE!
    - PTT: CAT
    - Poll: 80ms
 
-6. TEST
+7. TEST
    - Start WSJT-X
    - Check VU meter shows activity
    - Try changing frequency/band
