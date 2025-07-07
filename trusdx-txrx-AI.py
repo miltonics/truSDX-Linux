@@ -468,10 +468,11 @@ def handle_ts480_command(cmd, ser):
             
             return response.encode('utf-8')
         
-        # VFO query commands - critical for fixing "VFO None" error
+# VFO query commands - critical for fixing "VFO None" error
         elif cmd_str == 'V':
             # Get current VFO - return VFO A
-            return b'V0;'  # Always return VFO A as current
+            # If all else fails, default to safe value
+            return f'V{radio_state.get("rx_vfo", "0")};'.encode('utf-8')
         
         elif cmd_str.startswith('V'):
             if len(cmd_str) > 1:
@@ -507,10 +508,11 @@ def handle_ts480_command(cmd, ser):
             # Toggle VFO (but stay on VFO A)
             return b'SV0;'
         
-        # Additional VFO status commands for Hamlib compatibility
+# Additional VFO status commands for Hamlib compatibility
         elif cmd_str == 'VV':
             # VFO verification - return current VFO
-            return f'VV{radio_state["rx_vfo"]};'.encode('utf-8')
+            # Do not leave VFO state unknown, default to 0
+            return f'VV{radio_state.get("rx_vfo", "0")};'.encode('utf-8')
         
         elif cmd_str.startswith('VS'):
             if len(cmd_str) == 3:
