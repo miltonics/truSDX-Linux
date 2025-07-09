@@ -14,8 +14,8 @@ from connection_manager import ConnectionManager
 from logging_cfg import configure_logging, log
 from ui import UserInterface
 
-VERSION = "v1.1.6-pre-refactor-1-gcef88aa-dirty"
-BUILD_DATE = "2025-07-09"
+VERSION = "1.2.0"
+BUILD_DATE = "2025-01-27"
 AUTHOR = "SQ3SWF, PE1NNZ, AI-Enhanced - MONITORING & RECONNECT"
 
 COMPATIBLE_PROGRAMS = ["WSJT-X", "JS8Call", "FlDigi", "Winlink"]
