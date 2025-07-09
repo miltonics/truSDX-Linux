@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+*Current build: v1.1.6-pre-refactor-1-gcef88aa-dirty (2025-07-09)*
+
 *Current build: v1.1.6-pre-refactor-dirty (2025-07-09)*
 
 ### Added
