@@ -1,6 +1,18 @@
 # TruSDX Linux Driver for JS8Call
 
+🎉 **New Release: v1.2.0 Available!** 🎉
+
 A Python-based CAT interface driver that enables seamless integration between the TruSDX QRP transceiver and JS8Call on Linux systems.
+
+## 🚀 What's New in v1.2.0
+
+- **🔗 Hardware Monitoring & Reconnection**: Automatic device detection and recovery from disconnections
+- **🖥️ Enhanced User Interface**: Persistent header display with real-time status updates
+- **📊 Performance Improvements**: Optimized connection handling and reduced CPU usage
+- **🛠️ Development & Testing**: Comprehensive test suite and automated version management
+- **📦 Easy Installation**: Full pip installation support with setuptools integration
+
+[📋 View Full Release Notes](RELEASE_NOTES_v1.2.0.md) | [📥 Download Binaries](https://github.com/milton-tanaka/trusdx-ai/releases/tag/v1.2.0)
 
 ## Features
 
@@ -13,6 +25,22 @@ A Python-based CAT interface driver that enables seamless integration between th
 
 ## Quick Start
 
+### Method 1: Pip Installation (Recommended)
+
+1. **Install from source:**
+   ```bash
+   git clone https://github.com/milton-tanaka/trusdx-ai.git
+   cd trusdx-ai
+   pip install -e .
+   ```
+
+2. **Run the driver:**
+   ```bash
+   trusdx-ai
+   ```
+
+### Method 2: Manual Installation
+
 1. **Install dependencies:**
    ```bash
    chmod +x setup.sh
@@ -24,10 +52,21 @@ A Python-based CAT interface driver that enables seamless integration between th
    python3 trusdx-txrx-AI.py
    ```
 
-3. **Configure JS8Call:**
-   - Set CAT control to use TCP/IP connection
-   - Host: `localhost` 
-   - Port: `4532`
+### Method 3: Pre-built Binaries
+
+1. **Download the binary** from the [releases page](https://github.com/milton-tanaka/trusdx-ai/releases/tag/v1.2.0)
+2. **Make it executable:**
+   ```bash
+   chmod +x trusdx-ai-v1.2.0
+   ./trusdx-ai-v1.2.0
+   ```
+
+### Configuration
+
+**Configure JS8Call:**
+- Set CAT control to use TCP/IP connection
+- Host: `localhost` 
+- Port: `4532`
 
 ## Requirements
 
