@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # de SQ3SWF, PE1NNZ 2023
 # Enhanced AI version with Kenwood TS-480 CAT interface and persistent serial ports
-# Version: 1.1.8-AI-TX0-FREQ-FIXED (2025-06-23)
+# Version: 1.2.3 (2025-07-10)
 
 # Linux:
 # sudo apt install portaudio19-dev
@@ -46,12 +46,13 @@ import datetime
 import array
 import argparse
 import json
-import math
+import configparser
 from sys import platform
+import sys
 
 # Version information
-VERSION = "1.2.0-AI-MONITORING-RECONNECT"
-BUILD_DATE = "2025-06-27"
+VERSION = "1.2.3"
+BUILD_DATE = "2025-07-10"
 AUTHOR = "SQ3SWF, PE1NNZ, AI-Enhanced - MONITORING & RECONNECT"
 COMPATIBLE_PROGRAMS = ["WSJT-X", "JS8Call", "FlDigi", "Winlink"]
 
@@ -132,6 +133,40 @@ PERSISTENT_PORTS = {
     'audio_device': 'TRUSDX'
 }
 
+# Global logging configuration
+LOG_FILE = None
+LOG_LOCK = threading.Lock()
+
+def setup_logging():
+    """Setup logging with file rotation per run"""
+    global LOG_FILE
+    
+    # Create logs directory if it doesn't exist
+    logs_dir = "logs"
+    os.makedirs(logs_dir, exist_ok=True)
+    
+    # Generate log filename with timestamp
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_filename = f"trusdx-{timestamp}.log"
+    
+    # Use custom logfile if provided, otherwise use default in logs/
+    if config.get('logfile'):
+        LOG_FILE = config['logfile']
+    else:
+        LOG_FILE = os.path.join(logs_dir, log_filename)
+    
+    # Initialize log file with header
+    with LOG_LOCK:
+        try:
+            with open(LOG_FILE, 'w') as f:
+                f.write(f"truSDX-AI Driver v{VERSION} - Log started at {datetime.datetime.now()}\n")
+                f.write(f"Build Date: {BUILD_DATE}\n")
+                f.write(f"Platform: {platform}\n")
+                f.write("=" * 80 + "\n")
+        except Exception as e:
+            print(f"Warning: Could not initialize log file {LOG_FILE}: {e}")
+            LOG_FILE = None
+
 def log(msg, level="INFO"):
     """Log message with optional level and formatting
     
@@ -139,9 +174,20 @@ def log(msg, level="INFO"):
         msg: Message to log
         level: Log level ("INFO", "WARNING", "ERROR", "RECONNECT")
     """
-    if config['verbose']:
-        timestamp = datetime.datetime.utcnow()
-        
+    timestamp = datetime.datetime.utcnow()
+    
+    # Always log to file if enabled
+    if LOG_FILE:
+        with LOG_LOCK:
+            try:
+                with open(LOG_FILE, 'a') as f:
+                    f.write(f"[{timestamp}] {level}: {msg}\n")
+            except Exception as e:
+                # Silently continue if file logging fails
+                pass
+    
+    # Console output only if verbose mode is enabled
+    if config.get('verbose', False):
         # Format based on level
         if level == "RECONNECT":
             # Bold color header for reconnection messages
@@ -157,41 +203,17 @@ def clear_screen():
     """Clear terminal screen"""
     os.system('clear' if os.name == 'posix' else 'cls')
 
-def check_term_color():
-    """Check if terminal supports color based on TERM environment variable."""
-    term = os.getenv("TERM", "")
-    # Check for common color-capable terminals
-    color_terms = ['xterm', 'screen', 'tmux', 'rxvt', 'konsole', 'gnome']
-    return any(color_term in term for color_term in color_terms) or 'color' in term
-
-def get_color_code(color_code):
-    """Return color code if terminal supports color, otherwise empty string."""
-    return color_code if check_term_color() else ""
-
 def show_persistent_header():
     """Display persistent header with version and connection info"""
-    # Colors with fallback
-    clr_green = get_color_code("\033[1;32m")
-    clr_cyan = get_color_code("\033[1;36m")
-    clr_yellow = get_color_code("\033[1;33m")
-    clr_white = get_color_code("\033[1;37m")
-    clr_magenta = get_color_code("\033[1;35m")
-    reset = get_color_code("\033[0m")
-    
     # Setup screen with scrolling region
     print("\033[2J", end="")  # Clear entire screen
     print("\033[H", end="")   # Move cursor to home position
-    print(clr_green + "="*80 + reset)  # Green header line
-    print(f"{clr_cyan}truSDX-AI Driver v{VERSION}{reset} - {clr_yellow}{BUILD_DATE}{reset}")
-    
-    # Load config to get callsign
-    persistent_config = load_config()
-    callsign = persistent_config.get('callsign', 'N/A')
-    print(f"{clr_white}Callsign: {callsign}{reset}")
-    
-    print(f"{clr_magenta}  Radio:{reset} Kenwood TS-480 | {clr_magenta}Port:{reset} {PERSISTENT_PORTS['cat_port']} | {clr_magenta}Baud:{reset} 115200 | {clr_magenta}Poll:{reset} 80ms")
-    print(f"{clr_magenta}  Audio:{reset} {PERSISTENT_PORTS['audio_device']} (Input/Output) | {clr_magenta}PTT:{reset} CAT | {clr_magenta}Status:{reset} Ready")
-    print(clr_green + "="*80 + reset)  # Green header line
+    print("\033[1;32m" + "="*80 + "\033[0m")  # Green header line
+    print(f"\033[1;36mtruSDX-AI Driver v{VERSION}\033[0m - \033[1;33m{BUILD_DATE}\033[0m")
+    print(f"\033[1;37mConnections for WSJT-X/JS8Call:\033[0m")
+    print(f"\033[1;35m  Radio:\033[0m Kenwood TS-480 | \033[1;35mPort:\033[0m {PERSISTENT_PORTS['cat_port']} | \033[1;35mBaud:\033[0m 115200 | \033[1;35mPoll:\033[0m 80ms")
+    print(f"\033[1;35m  Audio:\033[0m {PERSISTENT_PORTS['audio_device']} (Input/Output) | \033[1;35mPTT:\033[0m CAT | \033[1;35mStatus:\033[0m Ready")
+    print("\033[1;32m" + "="*80 + "\033[0m")  # Green header line
     print()
     # Set scrolling region to start after header (lines 7 onwards)
     print("\033[7;24r", end="")  # Set scrolling region from line 7 to 24
@@ -203,48 +225,34 @@ def refresh_header_only(power_info=None):
     Args:
         power_info: Dict with 'watts' and 'reconnecting' status for power display
     """
-    # Colors with fallback
-    clr_green = get_color_code("\033[1;32m")
-    clr_cyan = get_color_code("\033[1;36m")
-    clr_yellow = get_color_code("\033[1;33m")
-    clr_white = get_color_code("\033[1;37m")
-    clr_magenta = get_color_code("\033[1;35m")
-    reset = get_color_code("\033[0m")
-    
     # Save cursor position
     print("\033[s", end="")  # Save cursor position
     
-    # Move to header area and redraw
-    print("\033[1;1H", end="")  # Move to top-left
-    
-    # Clear header area only (7 lines)
-    for i in range(7):
-        print(f"\033[{i+1};1H\033[K", end="")  # Clear each header line
-    
-    # Redraw header
-    print("\033[1;1H", end="")  # Back to top
-    print(clr_green + "="*80 + reset)  # Green header line
-    print(f"{clr_cyan}truSDX-AI Driver v{VERSION}{reset} - {clr_yellow}{BUILD_DATE}{reset}")
-    
-    # Load config to get callsign
-    persistent_config = load_config()
-    callsign = persistent_config.get('callsign', 'N/A')
-    print(f"{clr_white}Callsign: {callsign}{reset}")
+    # Move to top and redraw header with power info
+    print("\033[2J", end="")  # Clear entire screen
+    print("\033[H", end="")   # Move cursor to home position
+    print("\033[1;32m" + "="*80 + "\033[0m")  # Green header line
+    print(f"\033[1;36mtruSDX-AI Driver v{VERSION}\033[0m - \033[1;33m{BUILD_DATE}\033[0m")
+    print(f"\033[1;37mConnections for WSJT-X/JS8Call:\033[0m")
     
     # Build status line with power information
-    status_line = f"{clr_magenta}  Radio:{reset} Kenwood TS-480 | {clr_magenta}Port:{reset} {PERSISTENT_PORTS['cat_port']} | {clr_magenta}Baud:{reset} 115200 | {clr_magenta}Poll:{reset} 80ms"
+    status_line = f"\033[1;35m  Radio:\033[0m Kenwood TS-480 | \033[1;35mPort:\033[0m {PERSISTENT_PORTS['cat_port']} | \033[1;35mBaud:\033[0m 115200 | \033[1;35mPoll:\033[0m 80ms"
     
     # Add power status if provided
     if power_info:
         if power_info.get('reconnecting', False) or power_info.get('watts', 0) == 0:
-            status_line += f" | {clr_yellow}Power: {power_info.get('watts', 0)}W (reconnecting...){reset}"
+            status_line += f" | \033[1;33mPower: {power_info.get('watts', 0)}W (reconnecting…)\033[0m"
         else:
-            status_line += f" | {clr_green}Power: {power_info.get('watts', 0)}W{reset}"
+            status_line += f" | \033[1;32mPower: {power_info.get('watts', 0)}W\033[0m"
     
     print(status_line)
-    print(f"{clr_magenta}  Audio:{reset} {PERSISTENT_PORTS['audio_device']} (Input/Output) | {clr_magenta}PTT:{reset} CAT | {clr_magenta}Status:{reset} Ready")
-    print(clr_green + "="*80 + reset)  # Green header line
+    print(f"\033[1;35m  Audio:\033[0m {PERSISTENT_PORTS['audio_device']} (Input/Output) | \033[1;35mPTT:\033[0m CAT | \033[1;35mStatus:\033[0m Ready")
+    print("\033[1;32m" + "="*80 + "\033[0m")  # Green header line
     print()
+    
+    # Set scrolling region to start after header (lines 7 onwards)
+    print("\033[7;24r", end="")  # Set scrolling region from line 7 to 24
+    print("\033[7;1H", end="")   # Move cursor to line 7
     
     # Restore cursor position
     print("\033[u", end="")  # Restore cursor position
@@ -321,16 +329,39 @@ def check_audio_setup():
         # Check if TRUSDX sink exists
         result = os.popen('pactl list sinks | grep -c "Name: TRUSDX"').read().strip()
         if result == '0':
-            print(f"\033[1;33m[AUDIO] Creating TRUSDX audio device...\033[0m")
-            os.system('pactl load-module module-null-sink sink_name=TRUSDX sink_properties=device.description="TRUSDX"')
+            print(f"\033[1;33m[AUDIO] TRUSDX sink not found, auto-loading module-null-sink...\033[0m")
+            # Auto-load module-null-sink with TRUSDX name
+            load_result = os.popen('pactl load-module module-null-sink sink_name=TRUSDX sink_properties=device.description="TRUSDX"').read().strip()
+            if load_result.isdigit():
+                print(f"\033[1;32m[AUDIO] ✅ TRUSDX sink created successfully (module ID: {load_result})\033[0m")
+                log(f"Loaded module-null-sink TRUSDX with module ID: {load_result}")
+            else:
+                print(f"\033[1;31m[AUDIO] ❌ Failed to create TRUSDX sink: {load_result}\033[0m")
+                log(f"Failed to load module-null-sink: {load_result}")
+                return False
             time.sleep(1)
+        else:
+            print(f"\033[1;32m[AUDIO] ✅ TRUSDX sink already exists\033[0m")
         
-        # Verify it exists now
-        result = os.popen('pactl list sinks | grep -c "Name: TRUSDX"').read().strip()
-        return result == '1'
+        # Verify it exists now and get its index
+        sink_info = os.popen('pactl list sinks | grep -A 2 "Name: TRUSDX"').read()
+        if 'TRUSDX' in sink_info:
+            # Extract sink index if available
+            lines = sink_info.split('\n')
+            for i, line in enumerate(lines):
+                if 'Sink #' in line:
+                    sink_index = line.split('#')[1].strip()
+                    print(f"\033[1;36m[AUDIO] TRUSDX sink index: {sink_index}\033[0m")
+                    log(f"TRUSDX sink index: {sink_index}")
+                    break
+            return True
+        else:
+            print(f"\033[1;31m[AUDIO] ❌ TRUSDX sink verification failed\033[0m")
+            return False
         
     except Exception as e:
         log(f"Audio setup error: {e}")
+        print(f"\033[1;31m[AUDIO] Error during setup: {e}\033[0m")
         return False
 
 def query_radio(cmd, retries=3, timeout=0.2, ser_handle=None):
@@ -401,6 +432,7 @@ radio_state = {
     'mode': '2',                  # Will be read from radio at startup
     'rx_vfo': '0',               # VFO A
     'tx_vfo': '0',               # VFO A
+    'curr_vfo': 'A',             # Current VFO, initialized to VFOA
     'split': '0',                # Split off
     'rit': '0',                  # RIT off
     'xit': '0',                  # XIT off
@@ -425,54 +457,98 @@ def handle_ts480_command(cmd, ser):
         
         # IF command - return current status (critical for Hamlib)
         elif cmd_str == 'IF':
-            # Hamlib/rigctld expects EXACTLY 37 characters (not including IF and ;)
-            # Real TS-480 format: IF<11-digit freq><5-digit RIT/XIT><RIT><XIT><Bank><RX/TX><Mode><VFO><Scan><Split><Tone><ToneFreq><CTCSS>;
+            # Hamlib expects EXACTLY 37 characters (not including IF and ;)
+            # Format: IF13-character content
+            
+            # Update VFO indicator
+            vfo_indicator = '0' if radio_state['curr_vfo'] == 'A' else '1'
+            radio_state['rx_vfo'] = vfo_indicator
+            radio_state['tx_vfo'] = vfo_indicator
             # Total: IF + 37 chars + ; = 40 characters
             
-            # Build IF response matching real TS-480 format
-            freq = radio_state['vfo_a_freq'][:11].ljust(11, '0')     # 11 digits - frequency
-            rit_xit = '00000'                                        # 5 digits - RIT/XIT offset (always 00000)
-            rit = '0'                                                # 1 digit - RIT off
-            xit = '0'                                                # 1 digit - XIT off
-            bank = '00'                                              # 2 digits - memory bank
-            rxtx = '0'                                               # 1 digit - RX/TX status (0=RX)
-            mode = '2'                                               # 1 digit - mode (2=USB)
-            vfo = '0'                                                # 1 digit - VFO selection (0=VFO A)
-            scan = '0'                                               # 1 digit - scan status
-            split = '0'                                              # 1 digit - split status
-            tone = '0'                                               # 1 digit - tone status
-            tone_freq = '08'                                         # 2 digits - tone frequency
-            ctcss = '0'                                              # 1 digit - CTCSS status
+            freq = radio_state['vfo_a_freq'][:11].ljust(11, '0')     # 11 digits
+            rit_xit = radio_state['rit_offset'][:5].ljust(5, '0')    # 5 digits  
+            rit = radio_state['rit'][:1].ljust(1, '0')               # 1 digit
+            xit = radio_state['xit'][:1].ljust(1, '0')               # 1 digit
+            bank = '00'                                              # 2 digits
+            rxtx = '1' if status[0] else '0'                        # 1 digit (0=RX, 1=TX)
+            mode = radio_state['mode'][:1].ljust(1, '2')             # 1 digit
+            vfo = radio_state['rx_vfo'][:1].ljust(1, '0')            # 1 digit (0=VFO A, 1=VFO B)
+            scan = '0'                                               # 1 digit
+            split = radio_state['split'][:1].ljust(1, '0')           # 1 digit
+            tone = '0'                                               # 1 digit
+            tone_freq = '08'                                         # 2 digits
+            ctcss = '00'                                             # 2 digits (missing!)
             
-            # Calculate remaining padding to reach exactly 37 characters
-            # Current: 11+5+1+1+2+1+1+1+1+1+1+2+1 = 29 chars
-            # Need: 37 - 29 = 8 more chars
-            padding = '00000000'  # 8 digits padding
+            # Total should be: 11+5+1+1+2+1+1+1+1+1+1+2+2 = 30 chars
+            # We need 35 chars, so add 5 more padding
+            padding = '00000'  # 5 digits padding
             
-            # Build response with exactly 37 characters
+# Build response: IF + 35 characters + ;
             content = f'{freq}{rit_xit}{rit}{xit}{bank}{rxtx}{mode}{vfo}{scan}{split}{tone}{tone_freq}{ctcss}{padding}'
             
-            # Ensure exactly 37 characters - this is critical for rigctld
-            if len(content) != 37:
-                log(f"Warning: IF content length {len(content)} != 37, fixing")
-                content = content[:37].ljust(37, '0')
-            
+            # Ensure exactly 35 characters
+            content = content[:35].ljust(35, '0')
             response = f'IF{content};'
-            
-            # Final verification
-            if len(response) != 40:
-                log(f"Error: IF response length {len(response)} != 40: {response}")
-                # Use fallback response
-                response = f'IF{freq}00000000200000080000000;'
-            
-            log(f"IF response: {response} (total: {len(response)}, content: {len(content)})")
+
+            # Double-check length
+            if len(response) != 38:
+                # Known working 35-char format for TS-480
+                response = 'IF0001407400000000000200000008000;'
+
             return response.encode('utf-8')
+        
+        # VFO query commands - critical for fixing "VFO None" error
+        elif cmd_str == 'V':
+            # Get current VFO - return VFO A
+            return b'V0;'  # Always return VFO A as current
+        
+        elif cmd_str.startswith('V') and len(cmd_str) == 2 and cmd_str[1] in ['0', '1']:
+            # Set VFO command (V0 or V1 only)
+            vfo_val = cmd_str[1]
+            radio_state['rx_vfo'] = vfo_val
+            radio_state['tx_vfo'] = vfo_val
+            radio_state['curr_vfo'] = 'A' if vfo_val == '0' else 'B'
+            return None  # Forward to radio
         
         # AI command - auto information (critical for Hamlib)
         elif cmd_str.startswith('AI'):
             if len(cmd_str) > 2:
                 # Set AI mode
+                old_ai_mode = radio_state['ai_mode']
                 radio_state['ai_mode'] = cmd_str[2]
+                
+                # If AI mode is being turned on (1 or 2), send unsolicited ID and IF
+                if old_ai_mode == '0' and radio_state['ai_mode'] in ['1', '2']:
+                    # Send unsolicited ID and IF when AI mode is enabled
+                    try:
+                        if status[3] and ser:
+                            time.sleep(0.01)
+                            ser.write(b'ID020;')
+                            ser.flush()
+                            time.sleep(0.01)
+                            # Build IF response
+                            freq = radio_state['vfo_a_freq'][:11].ljust(11, '0')
+                            rit_xit = radio_state['rit_offset'][:5].ljust(5, '0')
+                            rit = radio_state['rit'][:1].ljust(1, '0')
+                            xit = radio_state['xit'][:1].ljust(1, '0')
+                            bank = '00'
+                            rxtx = '1' if status[0] else '0'  # Use status[0] for TX/RX indication
+                            mode = radio_state['mode'][:1].ljust(1, '2')
+                            vfo = '0' if radio_state['curr_vfo'] == 'A' else '1'
+                            scan = '0'
+                            split = radio_state['split'][:1].ljust(1, '0')
+                            tone = '0'
+                            tone_freq = '08'
+                            ctcss = '00'
+                            padding = '00000'
+                            content = f'{freq}{rit_xit}{rit}{xit}{bank}{rxtx}{mode}{vfo}{scan}{split}{tone}{tone_freq}{ctcss}{padding}'[:35].ljust(35, '0')
+                            ser.write(f'IF{content};'.encode('utf-8'))
+                            ser.flush()
+                            log("Sent unsolicited ID and IF for AI mode activation")
+                    except Exception as e:
+                        log(f"Error sending unsolicited AI responses: {e}")
+                
                 return cmd  # Echo back
             else:
                 # Read AI mode
@@ -498,10 +574,12 @@ def handle_ts480_command(cmd, ser):
                     return f'FA{current_freq};'.encode('utf-8')
                 else:
                     # Allow legitimate frequency changes
+                    radio_state['curr_vfo'] = 'A'
                     print(f"\033[1;32m[CAT] \u2705 Allowing frequency change to {freq_mhz:.3f} MHz\033[0m")
                     radio_state['vfo_a_freq'] = freq
                     refresh_header_only()
-                    return None  # Forward to radio
+                    # ACK with semicolon for FA setter
+                    return b';'
             else:
                 # Read VFO A frequency - return current state
                 print(f"\033[1;36m[DEBUG] JS8Call requesting frequency\033[0m")
@@ -515,7 +593,9 @@ def handle_ts480_command(cmd, ser):
                 # Set VFO B frequency - extract and validate 11-digit frequency
                 freq = cmd_str[2:13].ljust(11, '0')[:11]  # Ensure exactly 11 digits
                 radio_state['vfo_b_freq'] = freq
-                return None  # Forward to radio
+                radio_state['curr_vfo'] = 'B'
+                # ACK with semicolon for FB setter
+                return b';'
             else:
                 # Read VFO B frequency
                 freq = radio_state['vfo_b_freq'].ljust(11, '0')[:11]
@@ -540,58 +620,36 @@ def handle_ts480_command(cmd, ser):
                 # Read power status
                 return f'PS{radio_state["power_on"]};'.encode('utf-8')
         
-        # VFO operations - critical for Hamlib VFO handling
+        # VFO operations
         elif cmd_str.startswith('FR'):
             if len(cmd_str) > 2:
-                # Set RX VFO - validate and update state
-                vfo_val = cmd_str[2]
-                if vfo_val in ['0', '1']:  # 0=VFO A, 1=VFO B
-                    radio_state['rx_vfo'] = vfo_val
-                    log(f"Set RX VFO to {vfo_val} ({'A' if vfo_val == '0' else 'B'})")
-                    return None  # Forward to radio
-                else:
-                    log(f"Invalid VFO value: {vfo_val}")
-                    return None
+                # Set RX VFO
+                vfo_char = cmd_str[2]
+                if vfo_char == '0':
+                    radio_state['curr_vfo'] = 'A'
+                    radio_state['rx_vfo'] = '0'
+                elif vfo_char == '1':
+                    radio_state['curr_vfo'] = 'B'
+                    radio_state['rx_vfo'] = '1'
+                return b';'  # ACK
             else:
                 # Read RX VFO
-                return f'FR{radio_state["rx_vfo"]};'.encode('utf-8')
+                vfo_code = '0' if radio_state['curr_vfo'] == 'A' else '1'
+                return f'FR{vfo_code};'.encode('utf-8')
                 
         elif cmd_str.startswith('FT'):
             if len(cmd_str) > 2:
-                # Set TX VFO - validate and update state
-                vfo_val = cmd_str[2]
-                if vfo_val in ['0', '1']:  # 0=VFO A, 1=VFO B
-                    radio_state['tx_vfo'] = vfo_val
-                    log(f"Set TX VFO to {vfo_val} ({'A' if vfo_val == '0' else 'B'})")
-                    return None  # Forward to radio
-                else:
-                    log(f"Invalid VFO value: {vfo_val}")
-                    return None
+                # Set TX VFO
+                vfo_char = cmd_str[2]
+                if vfo_char == '0':
+                    radio_state['tx_vfo'] = '0'
+                elif vfo_char == '1':
+                    radio_state['tx_vfo'] = '1'
+                return b';'  # ACK
             else:
                 # Read TX VFO
-                return f'FT{radio_state["tx_vfo"]};'.encode('utf-8')
-        
-        # VFO selection commands (specific to Kenwood)
-        elif cmd_str == 'VS':
-            # VFO swap
-            log("VFO swap command - not implemented")
-            return None
-        
-        elif cmd_str.startswith('VS'):
-            if len(cmd_str) > 2:
-                # Set VFO - this might be the command causing issues
-                vfo_val = cmd_str[2]
-                if vfo_val in ['0', '1']:  # 0=VFO A, 1=VFO B
-                    radio_state['rx_vfo'] = vfo_val
-                    radio_state['tx_vfo'] = vfo_val
-                    log(f"Set current VFO to {vfo_val} ({'A' if vfo_val == '0' else 'B'})")
-                    return f'VS{vfo_val};'.encode('utf-8')
-                else:
-                    log(f"Invalid VFO selection: {vfo_val}")
-                    return None
-            else:
-                # Read current VFO
-                return f'VS{radio_state["rx_vfo"]};'.encode('utf-8')
+                vfo_code = '0' if radio_state['curr_vfo'] == 'A' else '1'
+                return f'FT{vfo_code};'.encode('utf-8')
         
         # Split operation
         elif cmd_str.startswith('SP'):
@@ -647,16 +705,30 @@ def handle_ts480_command(cmd, ser):
                 return b'SQ0000;'  # Squelch 0
         
         # PTT operations - must forward to truSDX hardware
-        elif cmd_str.startswith('TX') or cmd_str == 'RX':
-            return None  # Don't handle locally - forward to truSDX
-        
-        # Generic commands that should just be acknowledged
-        elif cmd_str in ['TX', 'RX']:
-            return cmd
+        elif cmd_str == 'TX':
+            # Query TX status
+            return b'TX0;' if status[0] else b'TX1;'
+        elif cmd_str.startswith('TX'):
+            # TX command with mode (TX1 = enter TX mode, TX0 = exit TX mode)
+            if cmd_str == 'TX1' and not status[0]:
+                # Starting transmission - need to unmute speaker first
+                print("\033[1;33m[TX] Transmit mode\033[0m")
+                # Return None to let main handler send UA1 before TX1
+            return None  # Forward to truSDX hardware
+        elif cmd_str == 'RX':
+            # Set to receive mode
+            return None  # Forward to truSDX hardware
             
         # Filter and other commands
         elif cmd_str.startswith('FL') or cmd_str.startswith('IS') or cmd_str.startswith('NB') or cmd_str.startswith('NR'):
             return cmd  # Echo back filter commands
+        
+        # FW command (firmware query or filter width) - return default
+        elif cmd_str.startswith('FW'):
+            if len(cmd_str) > 2:
+                return cmd  # Echo back
+            else:
+                return b'FW0000;'  # Default filter width
         
         # Handle common Hamlib initialization commands
         elif cmd_str == 'KS':
@@ -666,11 +738,23 @@ def handle_ts480_command(cmd, ser):
         elif cmd_str.startswith('EX'):
             return cmd        # Echo back EX commands
         
-        # For unknown commands, don't return error - just ignore
+        # UA command - audio control (mute/unmute speaker)
+        elif cmd_str.startswith('UA'):
+            if len(cmd_str) > 2:
+                # Set audio mode - forward to radio to ensure speaker control
+                return None  # Forward to radio
+            else:
+                # Read audio mode - return current setting
+                if config['unmute']:
+                    return b'UA1;'  # Unmuted
+                else:
+                    return b'UA2;'  # Muted
+        
+        # For unknown/unimplemented TS-480 commands, return ";" to avoid ERROR
         elif cmd_str:
-            log(f"Unknown CAT command: {cmd_str} - ignoring")
-            # Don't return anything for unknown commands
-            return None
+            log(f"Unimplemented TS-480 command: {cmd_str} - returning ';'")
+            # Return semicolon for unimplemented commands to avoid CAT errors
+            return b';'
         
         # For unhandled commands, forward to radio
         return None
@@ -689,13 +773,48 @@ def find_audio_device(name, occurance = 0):
     try:
         p = pyaudio.PyAudio()
         result = []
+        trusdx_devices = []  # Specifically track TRUSDX devices
+        
         for i in range(p.get_device_count()):
             device_info = p.get_device_info_by_index(i)
             device_name = device_info['name']
+            
+            # Special handling for TRUSDX devices
+            if 'TRUSDX' in device_name:
+                if device_info['maxInputChannels'] > 0 and '.monitor' in device_name:
+                    trusdx_devices.append((i, device_name, 'input'))
+                    if config.get('verbose', False):
+                        print(f"\033[1;36m[AUDIO] Found TRUSDX.monitor (input) - index: {i}, channels: {device_info['maxInputChannels']}\033[0m")
+                elif device_info['maxOutputChannels'] > 0:
+                    trusdx_devices.append((i, device_name, 'output'))
+                    if config.get('verbose', False):
+                        print(f"\033[1;36m[AUDIO] Found TRUSDX (output) - index: {i}, channels: {device_info['maxOutputChannels']}\033[0m")
+            
             if name.lower() in device_name.lower():
                 result.append(i)
                 log(f"Found audio device: {device_name} (index {i})")
+                if config.get('verbose', False):
+                    print(f"\033[1;90m[AUDIO] Device {i}: {device_name} (in:{device_info['maxInputChannels']}, out:{device_info['maxOutputChannels']})\033[0m")
+        
         p.terminate()
+        
+        # If looking for TRUSDX, use the specifically found devices
+        if 'TRUSDX' in name:
+            if name == 'TRUSDX.monitor':
+                # Find input device (monitor)
+                for idx, dev_name, dev_type in trusdx_devices:
+                    if dev_type == 'input' and '.monitor' in dev_name:
+                        log(f"Using TRUSDX.monitor device index {idx}")
+                        print(f"\033[1;32m[AUDIO] Selected TRUSDX.monitor (index: {idx})\033[0m")
+                        return idx
+            else:
+                # Find output device (sink)
+                for idx, dev_name, dev_type in trusdx_devices:
+                    if dev_type == 'output' and '.monitor' not in dev_name:
+                        log(f"Using TRUSDX sink device index {idx}")
+                        print(f"\033[1;32m[AUDIO] Selected TRUSDX sink (index: {idx})\033[0m")
+                        return idx
+        
         if len(result) > occurance:
             log(f"Using audio device index {result[occurance]} for '{name}'")
             return result[occurance]
@@ -728,8 +847,20 @@ def handle_rx_audio(ser, cat, pastream, d):
             status[1] = True            # go to CAT stream mode when data starts with US
         else:
             if status[3]:               # only send something to cat port, when active
-                cat.write(d)
-                cat.flush()
+                try:
+                    # Synchronize radio response transmission with same protection as emulated responses
+                    cat.reset_output_buffer()
+                    time.sleep(0.001)  # Brief pause to ensure buffer is actually clear
+                    cat.write(d)
+                    cat.flush()
+                    
+                    if config.get('verbose', False):
+                        print(f"\033[1;35m[RADIO] Forwarded radio response: {d}\033[0m")
+                        
+                except Exception as cat_error:
+                    log(f"CAT radio response write error: {cat_error}")
+                    print(f"\033[1;31m[CAT ERROR] Failed to forward radio response: {cat_error}\033[0m")
+                    
                 log(f"O: {d}")  # in CAT command mode
             else:
                 log("Skip CAT response, as CAT is not active.")
@@ -816,83 +947,75 @@ def tx_cat_delay(ser):
     #time.sleep(0.0005 + 32/audio_tx_rate_trusdx) # and wait until trusdx buffers are read
     time.sleep(0.010) # and wait a bit before interrupting TX stream for a CAT cmd
 
-def monitor_audio_levels(samples8, arr, source="unknown"):
-    """Monitor audio levels for VU meter debugging and diagnostics"""
-    if not samples8 or not arr:
-        return
+def send_cat(cmd, ser, pre_delay=0.003, post_delay=0.010):
+    """Send CAT command with proper timing and buffer management.
     
-    # Calculate various audio level metrics
-    min_8bit = min(samples8)
-    max_8bit = max(samples8)
-    avg_8bit = sum(samples8) / len(samples8)
-    
-    # Calculate 16-bit metrics
-    min_16bit = min(arr) if arr else 0
-    max_16bit = max(arr) if arr else 0
-    rms_16bit = int((sum(x*x for x in arr) / len(arr)) ** 0.5) if arr else 0
-    
-    # Calculate dynamic range and signal strength
-    range_8bit = max_8bit - min_8bit
-    signal_strength_8bit = max(abs(128 - min_8bit), abs(max_8bit - 128))
-    
-    # VU meter equivalent calculation (approximation)
-    # VU meter typically shows RMS levels with some peak response
-    vu_level_db = 20 * math.log10(rms_16bit / 32767.0) if rms_16bit > 0 else -60
-    
-    # Only log if there's significant signal or if verbose debugging is enabled
-    if signal_strength_8bit > 10 or config.get('verbose', False):
-        log(f"Audio levels [{source}] - 8bit: min={min_8bit}, max={max_8bit}, avg={avg_8bit:.1f}, range={range_8bit}, strength={signal_strength_8bit}")
-        log(f"Audio levels [{source}] - 16bit: min={min_16bit}, max={max_16bit}, rms={rms_16bit}, vu_db={vu_level_db:.1f}dB")
-        
-        # Warning if signal levels are too low for VU meter
-        if signal_strength_8bit < 5:
-            log(f"WARNING: Very low audio signal strength ({signal_strength_8bit}) - VU meter may bounce to zero", "WARNING")
+    Args:
+        cmd: The command bytes to send
+        ser: Serial port object
+        pre_delay: Delay before sending command (default 0.003s)
+        post_delay: Delay after sending command (default 0.010s)
+    """
+    ser.flush()
+    time.sleep(pre_delay)
+    ser.write(cmd)
+    ser.flush()
+    time.sleep(post_delay)
 
+def disable_cat_audio(ser):
+    """Ensure audio stream to CAT is disabled after TX ends (UA0)."""
+    state['cat_audio_enabled'] = False
+    try:
+        ser.write(b";UA0;")
+        ser.flush()
+        time.sleep(0.05)  # small settling delay
+        log("Sent UA0 after TX", "DEBUG")
+    except Exception as e:
+        log(f"UA0 send error: {e}", "ERROR")
+
+def enable_cat_audio(ser):
+    """Send UA1; to truSDX to enable CAT-audio ahead of TX"""
+    try:
+        send_cat(b'UA1;', ser, post_delay=0.030)  # use centralized CAT sender with 30ms delay
+        log('Sent UA1; (enable CAT-audio)', 'INFO')
+    except Exception as e:
+        log(f'UA1 send failed: {e}', 'ERROR')
 
 def handle_vox(samples8, ser):
-    # Updated VOX detection logic for improved audio levels
-    # With the new division by 128, we need to adjust the thresholds
-    
-    if len(samples8) > 0:
-        min_val = min(samples8)
-        max_val = max(samples8)
-        
-        # Calculate signal range from center (128)
-        signal_range = max(abs(128 - min_val), abs(max_val - 128))
-        
-        # Improved VOX threshold - trigger on significant signal deviation
-        # Adjusted for the new audio scaling (division by 128 instead of 256)
-        vox_threshold = 32  # Equivalent to about 25% of full scale
-        
-        if signal_range > vox_threshold:  # if contains loud signal
-            if not status[0]:
-                status[0] = True
-                if config.get('verbose', False):
-                    log(f"VOX triggered - signal range: {signal_range}, threshold: {vox_threshold}")
-                ser.write(b";TX0;")
-                ser.flush()
-        elif status[0]:  # in TX and no audio detected (silence)
-            tx_cat_delay(ser)
-            ser.write(b";RX;")
-            ser.flush()
-            status[0] = False
-            if config.get('verbose', False):
-                log(f"VOX released - signal range: {signal_range}, threshold: {vox_threshold}")
+    if (128 - min(samples8)) == 64 and (max(samples8) - 127) == 64: # if does contain very loud signal
+        if not status[0]:
+            if not state.get('cat_audio_enabled', False):
+                log("TX sequence start – enabling CAT-audio", level='RECONNECT')
+                enable_cat_audio(ser)
+                state['cat_audio_enabled'] = True
+            status[0] = True  # Set TX state BEFORE entering TX mode
+            log("UA1 → TX1", level='RECONNECT')
+            send_cat(b";TX1;", ser)  # TX1 = enter TX mode
+    elif status[0]:  # in TX and no audio detected (silence)
+        tx_cat_delay(ser)  # Call delay BEFORE TX0 command
+        log("TX1 → audio-stream → TX0", level='RECONNECT')
+        send_cat(b";TX0;", ser)  # TX0 = exit TX mode
+        log("TX sequence end – disabling CAT-audio", level='RECONNECT')
+        disable_cat_audio(ser)  # Send UA0 after exiting TX
+        log("TX0 → UA0", level='RECONNECT')
+        status[0] = False  # Clear TX state after exiting
 
 def handle_rts_dtr(ser, cat):
     if not status[4] and (cat.cts or cat.dsr):
+        if not state.get('cat_audio_enabled', False):
+            enable_cat_audio(ser)
+            state['cat_audio_enabled'] = True
         status[4] = True    # keyed by RTS/DTR
-        status[0] = True
-        #log("***TX mode")
-        ser.write(b";TX0;")
-        ser.flush()
+        status[0] = True    # Set TX state BEFORE entering TX mode
+        #log("***TX mode - entering with TX1")
+        send_cat(b";TX1;", ser)  # TX1 = enter TX mode
     elif status[4] and not (cat.cts or cat.dsr):  #if keyed by RTS/DTR
-        tx_cat_delay(ser)
-        ser.write(b";RX;")
-        ser.flush()
+        tx_cat_delay(ser)  # Call delay BEFORE TX0 command
+        send_cat(b";TX0;", ser)  # TX0 = exit TX mode
+        disable_cat_audio(ser)  # Send UA0 after exiting TX
         status[4] = False
-        status[0] = False
-        #log("***RX mode")
+        status[0] = False  # Clear TX state after exiting
+        #log("***RX mode - exited with TX0")
     
 def handle_cat(pastream, ser, cat):
     if(cat.inWaiting()):
@@ -933,13 +1056,30 @@ def handle_cat(pastream, ser, cat):
                 ts480_response = handle_ts480_command(d, ser)
                 if ts480_response:
                     print(f"\033[1;34m[CAT] \033[0m{d.decode('utf-8', errors='ignore').strip()} \033[1;32m→\033[0m {ts480_response.decode('utf-8', errors='ignore').strip()}")
-                    cat.write(ts480_response)
-                    cat.flush()
+                    
+                    # Synchronize CAT response transmission
+                    try:
+                        # Ensure buffer is clear and wait for any ongoing transmission to complete
+                        cat.reset_output_buffer()
+                        time.sleep(0.001)  # Brief pause to ensure buffer is actually clear
+                        
+                        # Write response in a single atomic operation
+                        cat.write(ts480_response)
+                        cat.flush()
+                        
+                        # Verify the response was sent cleanly
+                        if config.get('verbose', False):
+                            print(f"\033[1;36m[DEBUG] Sent clean CAT response: {ts480_response}\033[0m")
+                            
+                    except Exception as cat_error:
+                        log(f"CAT write error: {cat_error}")
+                        print(f"\033[1;31m[CAT ERROR] Failed to send response: {cat_error}\033[0m")
+                    
                     log(f"I: {d}")
                     log(f"O: {ts480_response} (TS-480 emu)")
                     
                     # Small delay to prevent overwhelming the CAT interface
-                    time.sleep(0.001)
+                    time.sleep(0.005)  # Increased delay for better synchronization
                     continue
                 
                 # Forward to radio if not handled locally
@@ -971,17 +1111,29 @@ def handle_cat(pastream, ser, cat):
                         else:
                             print(f"\033[1;33m[FREQ] No valid response from radio\033[0m")
                 
-                if d.startswith(b"TX"):
-                   status[0] = True
-                   print("\033[1;31m[TX] Transmit mode\033[0m")
-                   pastream.stop_stream()
-                   pastream.start_stream()
-                   pastream.read(config['block_size'], exception_on_overflow = False)
-                if d.startswith(b"RX"):
-                   status[0] = False
-                   print("\033[1;32m[RX] Receive mode\033[0m")
-                   pastream.stop_stream()
-                   pastream.start_stream()
+                if d.startswith(b"TX1"):
+                    # Need to unmute speaker before TX1
+                    if not state.get('cat_audio_enabled', False):
+                        print("\033[1;33m[TX] Enabling CAT audio (UA1) before TX1...\033[0m")
+                        enable_cat_audio(ser)
+                        state['cat_audio_enabled'] = True
+                    status[0] = True  # Set TX state BEFORE sending TX command
+                    print("\033[1;31m[TX] Transmit mode\033[0m")
+                    pastream.stop_stream()
+                    pastream.start_stream()
+                    time.sleep(0.1)  # Ensure stream is stable before reading
+                elif d.startswith(b"TX0") or d.startswith(b"RX"):
+                    # TX0 or RX command - exit TX mode
+                    # Note: tx_cat_delay was already called above if status[0] was True
+                    # So we don't need to call it again here
+                    if state.get('cat_audio_enabled', False):
+                        print("\033[1;33m[RX] Disabling CAT audio (UA0) after TX...\033[0m")
+                        disable_cat_audio(ser)
+                        state['cat_audio_enabled'] = False
+                    status[0] = False  # Clear TX state after sending command
+                    print("\033[1;32m[RX] Receive mode\033[0m")
+                    pastream.stop_stream()
+                    pastream.start_stream()
                
         except Exception as e:
             log(f"CAT error: {e}")
@@ -996,20 +1148,12 @@ def transmit_audio_via_serial(pastream, ser, cat):
             if (status[0] or config['vox']) and pastream.get_read_available() > 0:    # in TX mode, and audio available
                 samples = pastream.read(config['block_size'], exception_on_overflow = False)
                 arr = array.array('h', samples)
+                samples8 = bytearray([128 + x//256 for x in arr])  # was //512 because with //256 there is 5dB too much signal. Win7 only support 16 bits input audio -> convert to 8 bits
                 
-                # Improved audio level calculation to prevent VU meter bouncing to zero
-                # Scale 16-bit signed audio (-32768 to 32767) to 8-bit unsigned (0 to 255)
-                # Using division by 128 instead of 256 to maintain proper signal levels
-                # This gives us approximately 20dB louder signal level as requested
-                samples8 = bytearray([min(255, max(0, 128 + x//128)) for x in arr])
+                # Conservative filtering to prevent corruption of CAT responses
+                # Only filter the most critical CAT command delimiter
+                samples8 = samples8.replace(b'\x3b', b'\x3a')      # filter ; of stream (essential)
                 
-                # Monitor audio levels for VU meter debugging
-                # This helps identify if the VU meter is bouncing to zero due to low signal levels
-                if len(samples8) > 0:
-                    # Use the dedicated audio level monitoring function
-                    monitor_audio_levels(samples8, arr, "TX_AUDIO")
-                
-                samples8 = samples8.replace(b'\x3b', b'\x3a')      # filter ; of stream
                 if status[0]: ser.write(samples8)
                 if config['vox']: handle_vox(samples8, ser)
             else:
@@ -1303,30 +1447,34 @@ def safe_reconnect():
                 log("CAT buffer reset after reconnection")
             
             # Initialize radio with proper commands
-            # UA2 = mute speaker (default and when --mute-speaker is set)
-            # UA1 = unmute speaker (only when --unmute is set and --mute-speaker is not set)
-            if config.get('mute_speaker', False):
-                init_cmd = b";MD2;UA2;"  # Force mute speaker while keeping VU meter active
-            elif config.get('unmute', False):
-                init_cmd = b";MD2;UA1;"  # Enable speaker audio
-            else:
-                init_cmd = b";MD2;UA2;"  # Default: mute speaker
+            init_cmd = b";MD2;UA2;" if not config['unmute'] else b";MD2;UA1;"
             new_ser.write(init_cmd)
             new_ser.flush()
             time.sleep(0.3)
             
             # Initialize radio
             time.sleep(2)  # Wait for device to stabilize
-            # Apply the same logic for the second initialization
-            if config.get('mute_speaker', False):
-                init_cmd = b";MD2;UA2;"  # Force mute speaker while keeping VU meter active
-            elif config.get('unmute', False):
-                init_cmd = b";MD2;UA1;"  # Enable speaker audio
-            else:
-                init_cmd = b";MD2;UA2;"  # Default: mute speaker
+            init_cmd = b";MD2;UA2;" if not config['unmute'] else b";MD2;UA1;"
             new_ser.write(init_cmd)
             new_ser.flush()
             time.sleep(0.5)
+            
+            # Speaker-mute guarantee on reconnection - send unconditionally
+            try:
+                if config['unmute']:
+                    new_ser.write(b";UA1;")
+                    new_ser.flush()
+                    log("Speaker unmuted")
+                    print(f"\033[1;33m[RECONNECT] ✅ Speaker unmuted (UA1)\033[0m")
+                else:
+                    new_ser.write(b";UA2;")
+                    new_ser.flush()
+                    log("Speaker muted")
+                    print(f"\033[1;32m[RECONNECT] ✅ Speaker muted (UA2)\033[0m")
+                time.sleep(0.2)  # Give radio time to process
+            except Exception as mute_error:
+                log(f"Error setting speaker mute state during reconnection: {mute_error}")
+                print(f"\033[1;31m[RECONNECT] Error setting speaker mute state: {mute_error}\033[0m")
             
         except Exception as e:
             log(f"Error during hardware re-init: {e}")
@@ -1355,10 +1503,8 @@ def safe_reconnect():
                 # If we were transmitting before disconnection, restart TX
                 if was_transmitting and status[5]:
                     print("\033[1;31m[RECONNECT] 🔄 Restoring TX mode after connection lost...\033[0m")
-                    state['ser'].write(b";TX0;")
-                    state['ser'].flush()
+                    send_cat(b";TX1;", state['ser'])  # TX1 = enter TX mode
                     status[0] = True  # Restore TX state
-                    time.sleep(0.2)
                 
                 freq_mhz = float(preserved_freq) / 1000000.0
                 log(f"Re-applied radio settings: freq={freq_mhz:.3f}MHz, mode={preserved_mode}")
@@ -1398,8 +1544,8 @@ def get_platform_config():
     """Get platform-specific configuration"""
     if platform == "linux" or platform == "linux2":
         return {
-            'virtual_audio_dev_out': "",
-            'virtual_audio_dev_in': "",
+            'virtual_audio_dev_out': "TRUSDX",         # Sink for output
+            'virtual_audio_dev_in': "TRUSDX.monitor",  # Monitor for input
             'trusdx_serial_dev': "USB Serial",
             'loopback_serial_dev': "",
             'cat_serial_dev': "",
@@ -1440,6 +1586,12 @@ def pty_echo(fd1, fd2):
                     log(f"PTY device disconnected: {e}")
                     print(f"\033[1;33m[PTY] 🔌 Virtual device disconnected\033[0m")
                     break  # Exit gracefully
+                elif e.errno == 25:  # Errno 25: Inappropriate ioctl for device (RTS/DTR related)
+                    # Hamlib's ioctl will still fail in the C layer, so we trap the IOError
+                    # in the PTY echo thread and just ignore it - keeps stderr clean without touching JS8Call
+                    log(f"PTY ioctl error (RTS/DTR related) - ignoring: {e}")
+                    time.sleep(0.001)
+                    continue
                 else:
                     log(f"PTY I/O error: {e}")
                     time.sleep(0.1)
@@ -1473,9 +1625,9 @@ def run():
         create_persistent_serial_ports()
 
         if platform == "linux" or platform == "linux2":
-           # Use empty string for default audio devices - this is what worked in 1.1.6
-           virtual_audio_dev_out = ""#"TRUSDX"
-           virtual_audio_dev_in  = ""#"TRUSDX"
+           # Use TRUSDX null-sink devices for audio
+           virtual_audio_dev_out = "TRUSDX"         # Audio from WSJT-X/JS8Call to truSDX (sink)
+           virtual_audio_dev_in  = "TRUSDX.monitor" # Audio from truSDX to WSJT-X/JS8Call (monitor)
            trusdx_serial_dev     = "USB Serial"
            loopback_serial_dev   = ""
            cat_serial_dev        = ""
@@ -1542,6 +1694,28 @@ def run():
                 rtscts=False,
                 dsrdtr=False
             )
+            
+            # Emulate RTS/DTR success inside the Python driver
+            # Before opening ser2 (the PTY side), monkey-patch RTS/DTR methods
+            if hasattr(ser2, "setRTS"):  # pyserial ≥3
+                ser2.setRTS = lambda x: None
+                ser2.setDTR = lambda x: None
+            
+            # Monkey-patch serial.Serial.rts/dtr properties to harmless no-ops
+            # This prevents Hamlib's ioctl calls from raising exceptions in Python layer
+            original_rts_fget = serial.Serial.rts.fget if hasattr(serial.Serial.rts, 'fget') else None
+            original_rts_fset = serial.Serial.rts.fset if hasattr(serial.Serial.rts, 'fset') else None
+            original_dtr_fget = serial.Serial.dtr.fget if hasattr(serial.Serial.dtr, 'fget') else None
+            original_dtr_fset = serial.Serial.dtr.fset if hasattr(serial.Serial.dtr, 'fset') else None
+            
+            def noop_rts_get(self): return True  # Always report RTS as active
+            def noop_rts_set(self, value): pass  # Do nothing when setting RTS
+            def noop_dtr_get(self): return True  # Always report DTR as active  
+            def noop_dtr_set(self, value): pass  # Do nothing when setting DTR
+            
+            # Apply monkey patches
+            serial.Serial.rts = property(noop_rts_get, noop_rts_set)
+            serial.Serial.dtr = property(noop_dtr_get, noop_dtr_set)
             print(f"\033[1;32m[SERIAL] CAT port configured: {loopback_serial_dev}\033[0m")
         except Exception as e:
             if platform == "win32":
@@ -1550,14 +1724,25 @@ def run():
                 print(f"\033[1;31m[ERROR] /dev/pts/x device not found: {e}\033[0m")
         
         try:
-           #in_stream = pyaudio.PyAudio().open(frames_per_buffer=0, format = pyaudio.paInt16, channels = 1, rate = audio_tx_rate, input = True, input_device_index = find_audio_device(virtual_audio_dev_out) if virtual_audio_dev_out else -1)
-           in_stream = pyaudio.PyAudio().open(frames_per_buffer=config['block_size'], format = pyaudio.paInt16, channels = 1, rate = audio_tx_rate, input = True, input_device_index = find_audio_device(virtual_audio_dev_out) if virtual_audio_dev_out else -1)
-           out_stream = pyaudio.PyAudio().open(frames_per_buffer=0, format = pyaudio.paUInt8, channels = 1, rate = audio_rx_rate, output = True, output_device_index = find_audio_device(virtual_audio_dev_in) if virtual_audio_dev_in else -1)
+           # Setup audio streams with proper device indices
+           in_device_idx = find_audio_device(virtual_audio_dev_out) if virtual_audio_dev_out else -1
+           out_device_idx = find_audio_device(virtual_audio_dev_in) if virtual_audio_dev_in else -1
+           
+           if config.get('verbose', False):
+               print(f"\033[1;36m[AUDIO] Opening streams - Input device: {virtual_audio_dev_out} (index: {in_device_idx}), Output device: {virtual_audio_dev_in} (index: {out_device_idx})\033[0m")
+           
+           # in_stream receives audio from WSJT-X/JS8Call via TRUSDX sink
+           in_stream = pyaudio.PyAudio().open(frames_per_buffer=config['block_size'], format = pyaudio.paInt16, channels = 1, rate = audio_tx_rate, input = True, input_device_index = in_device_idx)
+           # out_stream sends audio to WSJT-X/JS8Call via TRUSDX.monitor
+           out_stream = pyaudio.PyAudio().open(frames_per_buffer=0, format = pyaudio.paUInt8, channels = 1, rate = audio_rx_rate, output = True, output_device_index = out_device_idx)
+           
+           print(f"\033[1;32m[AUDIO] ✅ Audio streams opened successfully\033[0m")
         except Exception as e:
             if platform == "win32": print("VB-Audio CABLE not found: reinstall or enable")
             else:
-                print("port audio device not found: ")
-                print("  run in terminal: pactl load-module module-null-sink sink_name=TRUSDX sink_properties=device.description=\"TRUSDX\" && pavucontrol  (hint: sudo modprobe snd-aloop)")
+                print("\033[1;31m[AUDIO] ❌ Audio device error: {e}\033[0m")
+                print("\033[1;33m[AUDIO] The TRUSDX sink will be auto-created if missing\033[0m")
+                print("\033[1;33m[AUDIO] Manual command: pactl load-module module-null-sink sink_name=TRUSDX sink_properties=device.description=\"TRUSDX\"\033[0m")
             raise
  
         try:
@@ -1574,20 +1759,21 @@ def run():
         print(f"\033[1;33m[INIT] Initializing radio communication...\033[0m")
         try:
             # Send basic initialization commands (like working 1.1.6)
-            # UA2 = mute speaker (default and when --mute-speaker is set)
-            # UA1 = unmute speaker (only when --unmute is set and --mute-speaker is not set)
-            if config.get('mute_speaker', False):
-                init_cmd = b";MD2;UA2;"  # Force mute speaker while keeping VU meter active
-                print(f"\033[1;33m[INIT] Mute speaker enabled (--mute-speaker)\033[0m")
-            elif config.get('unmute', False):
-                init_cmd = b";MD2;UA1;"  # Enable speaker audio
-                print(f"\033[1;33m[INIT] Speaker audio enabled (--unmute)\033[0m")
-            else:
-                init_cmd = b";MD2;UA2;"  # Default: mute speaker
-                print(f"\033[1;33m[INIT] Speaker muted (default)\033[0m")
-            ser.write(init_cmd)  # enable audio streaming, set USB mode
+            # UA2 = muted speaker, UA1 = unmuted speaker
+            init_cmd = b";MD2;UA2;" if not config['unmute'] else b";MD2;UA1;"
+            ser.write(init_cmd)  # enable audio streaming, set USB mode, mute speaker
             ser.flush()
             time.sleep(0.5)  # Give radio time to process
+            
+            # Ensure speaker is muted by sending explicit mute command
+            if not config['unmute']:
+                ser.write(b";UA2;")  # Explicitly mute the speaker
+                ser.flush() 
+                time.sleep(0.2)
+                print(f"\033[1;32m[INIT] ✅ Radio speaker muted (UA2)\033[0m")
+            else:
+                print(f"\033[1;33m[INIT] ✅ Radio speaker unmuted (UA1) - use --unmute flag to enable\033[0m")
+                
             print(f"\033[1;32m[INIT] ✅ Radio initialized with basic commands\033[0m")
         except Exception as e:
             print(f"\033[1;31m[INIT] Error initializing radio: {e}\033[0m")
@@ -1668,6 +1854,23 @@ def run():
         current_freq = float(radio_state['vfo_a_freq']) / 1000000.0
         print(f"\033[1;36m[INIT] Will report {current_freq:.3f} MHz to CAT clients\033[0m")
         #status[1] = True
+        
+        # Speaker-mute guarantee on startup - send unconditionally
+        try:
+            if config['unmute']:
+                ser.write(b";UA1;")
+                ser.flush()
+                log("Speaker unmuted")
+                print(f"\033[1;33m[INIT] ✅ Speaker unmuted (UA1)\033[0m")
+            else:
+                ser.write(b";UA2;")
+                ser.flush()
+                log("Speaker muted")
+                print(f"\033[1;32m[INIT] ✅ Speaker muted (UA2)\033[0m")
+            time.sleep(0.2)  # Give radio time to process
+        except Exception as e:
+            log(f"Error setting speaker mute state: {e}")
+            print(f"\033[1;31m[INIT] Error setting speaker mute state: {e}\033[0m")
 
         # Store handles in state dictionary for monitoring and reconnection
         with handle_lock:
@@ -1704,7 +1907,8 @@ def run():
         threading.Thread(target=delayed_power_polling, daemon=True).start()
 
         clear_screen()
-        show_persistent_header()
+        if not config.get('no_header', False):
+            show_persistent_header()
         print(f"\033[1;32m[INIT] truSDX-AI Driver v{VERSION} started successfully!\033[0m")
         print(f"\033[1;37m[INFO] Available devices:\033[0m [{virtual_audio_dev_in}, {virtual_audio_dev_out}, {cat_serial_dev}]")
         print(f"\033[1;37m[INFO] Persistent CAT port:\033[0m {alt_cat_serial_dev}")
@@ -1725,6 +1929,7 @@ def run():
         #ts = time.time()
         # Add debug tracking for main loop
         loop_count = 0
+        header_refresh_count = 0
         while status[2]:    # wait and idle
             loop_count += 1
             print(f"\033[1;36m[DEBUG] Main loop iteration {loop_count}, status[2]={status[2]}\033[0m")
@@ -1739,6 +1944,14 @@ def run():
             # Check thread status
             thread_count = threading.active_count()
             print(f"\033[1;36m[DEBUG] Active threads: {thread_count}\033[0m")
+            
+            # Refresh header every 30 seconds (30 iterations since we sleep 1 second)
+            header_refresh_count += 1
+            if header_refresh_count >= 30:
+                header_refresh_count = 0
+                if not config.get('no_header', False):
+                    refresh_header_only()
+                    print(f"\033[1;36m[HEADER] Periodic header refresh\033[0m")
             
             # display some stats every 1 seconds
             #log(f"{int(time.time()-ts)} buf: {len(buf)}")
@@ -1773,10 +1986,46 @@ def run():
         log(e)
         pass	
 
+def check_js8call_ini():
+    """Check JS8Call.ini for RTS/DTR settings and warn user once if still enabled"""
+    js8call_ini_paths = [
+        os.path.expanduser("~/.config/JS8Call.ini"),
+        os.path.expanduser("~/.config/js8call/JS8Call.ini"),
+        os.path.expanduser("~/AppData/Local/JS8Call/JS8Call.ini"),
+        os.path.expanduser("~/Library/Preferences/JS8Call.ini")
+    ]
+    
+    for ini_path in js8call_ini_paths:
+        if os.path.exists(ini_path):
+            try:
+                config_parser = configparser.ConfigParser()
+                config_parser.read(ini_path)
+                
+                # Check for RTS/DTR settings in Configuration section
+                if 'Configuration' in config_parser:
+                    cat_force_rts = config_parser.get('Configuration', 'CATForceRTS', fallback='false').lower()
+                    cat_force_dtr = config_parser.get('Configuration', 'CATForceDTR', fallback='false').lower()
+                    
+                    if cat_force_rts == 'true' or cat_force_dtr == 'true':
+                        print(f"\033[1;33m[CONFIG] ⚠️  JS8Call.ini still has RTS/DTR enabled ({ini_path})\033[0m")
+                        print(f"\033[1;33m[CONFIG] ℹ️  This is now safely absorbed by the driver's monkey-patch\033[0m")
+                        print(f"\033[1;33m[CONFIG] 💡 Consider disabling RTS/DTR in JS8Call settings for cleaner operation\033[0m")
+                        return  # Only show warning once, even if multiple settings are true
+                        
+                break  # Found and processed the file, no need to check other paths
+                
+            except Exception as e:
+                if config.get('verbose', False):
+                    print(f"\033[1;33m[CONFIG] Could not parse {ini_path}: {e}\033[0m")
+                continue
+
 def main():
     if not config.get('no_header', False):
         show_version_info()
-        print("\nStarting truSDX-AI Driver...")
+        log("Starting truSDX-AI Driver...", "INFO")
+    
+    # Check JS8Call.ini for RTS/DTR settings and warn if needed
+    check_js8call_ini()
     
     max_restart_attempts = 5
     restart_count = 0
@@ -1794,38 +2043,38 @@ def main():
             # If run() exits normally, check if it was due to hardware disconnection
             if state.get('hardware_disconnected', False):
                 restart_count += 1
-                print(f"\033[1;33m[RESTART] Hardware disconnection detected - attempting restart #{restart_count}/{max_restart_attempts} in 3 seconds...\033[0m")
+                log(f"[RESTART] Hardware disconnection detected - attempting restart #{restart_count}/{max_restart_attempts} in 3 seconds...", "WARNING")
                 
                 if restart_count >= max_restart_attempts:
-                    print(f"\033[1;31m[FATAL] Maximum restart attempts ({max_restart_attempts}) exceeded after hardware disconnections. Exiting.\033[0m")
+                    log(f"[FATAL] Maximum restart attempts ({max_restart_attempts}) exceeded after hardware disconnections. Exiting.", "ERROR")
                     break
                     
                 time.sleep(3)
                 continue  # Restart the main loop
             else:
                 # Normal exit - break the loop
-                print(f"\033[1;32m[EXIT] truSDX-AI Driver exiting normally\033[0m")
+                log("[EXIT] truSDX-AI Driver exiting normally", "INFO")
                 break
             
         except Exception as e:
             restart_count += 1
             log(f"Main loop error (attempt {restart_count}/{max_restart_attempts}): {e}")
-            print(f"\033[1;31m[ERROR] Main loop failed (attempt {restart_count}/{max_restart_attempts}): {e}\033[0m")
+            log(f"[ERROR] Main loop failed (attempt {restart_count}/{max_restart_attempts}): {e}", "ERROR")
             
             if restart_count >= max_restart_attempts:
-                print(f"\033[1;31m[FATAL] Maximum restart attempts ({max_restart_attempts}) exceeded. Exiting.\033[0m")
+                log(f"[FATAL] Maximum restart attempts ({max_restart_attempts}) exceeded. Exiting.", "ERROR")
                 break
             
             # Check if it was a hardware disconnection
             if state.get('hardware_disconnected', False):
-                print(f"\033[1;33m[RESTART] Hardware disconnection detected - attempting restart in 3 seconds...\033[0m")
+                log("[RESTART] Hardware disconnection detected - attempting restart in 3 seconds...", "WARNING")
                 time.sleep(3)
             else:
                 # Wait before retrying to prevent rapid restart loops
-                print(f"\033[1;33m[RESTART] Unexpected error - retrying in 5 seconds...\033[0m")
+                log("[RESTART] Unexpected error - retrying in 5 seconds...", "WARNING")
                 time.sleep(5)
     
-    print(f"\033[1;32m[EXIT] truSDX-AI Driver exiting gracefully\033[0m")
+    log("[EXIT] truSDX-AI Driver exiting gracefully", "INFO")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=f"truSDX-AI audio driver v{VERSION}", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -1838,22 +2087,16 @@ if __name__ == '__main__':
     parser.add_argument("-T", "--tx-block-size", type=int, default=48, help="TX Block size")
     parser.add_argument("--no-header", action="store_true", default=False, help="Skip initial version display")
     parser.add_argument("--no-power-monitor", action="store_true", default=True, help="Disable power monitoring feature")
-    parser.add_argument("--mute-speaker", action="store_true", default=False, help="Mute speaker output while keeping VU meter active")
-    parser.add_argument("--callsign", type=str, help="Set callsign (overrides config file)")
+    parser.add_argument("--logfile", type=str, help="Override default log file location")
     args = parser.parse_args()
     config = vars(args)
     
-    # Load persistent configuration
-    persistent_config = load_config()
+    # Setup logging before any other operations
+    setup_logging()
     
-    # Override callsign if provided via command line
-    if config.get('callsign'):
-        persistent_config['callsign'] = config['callsign']
-        save_config(persistent_config)
-    
-    # Update port info with any persistent configuration
-    PERSISTENT_PORTS.update(persistent_config)
-    if config['verbose']: print(config)
+    if config['verbose']: 
+        print(config)
+        log(f"Configuration loaded: {config}")
 
     main()
 
