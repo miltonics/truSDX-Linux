@@ -1,0 +1,17 @@
+[Unit]
+Description=Check Time Synchronization
+After=network-online.target chronyd.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/check_time_sync.sh
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=truSDX
+
+# Run as root to allow chronyc makestep
+User=root
+
+[Install]
+WantedBy=multi-user.target

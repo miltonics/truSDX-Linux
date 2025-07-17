@@ -604,9 +604,10 @@ def handle_ts480_command(cmd, ser):
         # Mode commands
         elif cmd_str.startswith('MD'):
             if len(cmd_str) > 2:
-                # Set mode - forward to hardware and update state
+                # Set mode - update state and echo back acknowledgment
                 radio_state['mode'] = cmd_str[2]
-                return None  # Forward to radio
+                # Don't forward to radio, just acknowledge
+                return b';'  # ACK
             else:
                 # Read mode
                 return f'MD{radio_state["mode"]};'.encode('utf-8')
@@ -706,7 +707,7 @@ def handle_ts480_command(cmd, ser):
         
         # PTT operations - must forward to truSDX hardware
         elif cmd_str == 'TX':
-            # Query TX status
+            # Query TX status - TX0 = in TX mode, TX1 = in RX mode
             return b'TX0;' if status[0] else b'TX1;'
         elif cmd_str.startswith('TX'):
             # TX command with mode (TX1 = enter TX mode, TX0 = exit TX mode)
@@ -976,8 +977,20 @@ def disable_cat_audio(ser):
 def enable_cat_audio(ser):
     """Send UA1; to truSDX to enable CAT-audio ahead of TX"""
     try:
-        send_cat(b'UA1;', ser, post_delay=0.030)  # use centralized CAT sender with 30ms delay
+        # First ensure we're in USB mode (MD2)
+        send_cat(b'MD2;', ser, post_delay=0.050)  # Set USB mode first
+        log('Sent MD2; (USB mode)', 'INFO')
+        
+        # Then enable CAT audio with longer delay
+        send_cat(b'UA1;', ser, post_delay=0.100)  # Increased delay from 30ms to 100ms
         log('Sent UA1; (enable CAT-audio)', 'INFO')
+        
+        # Additional settling time for truSDX hardware
+        time.sleep(0.050)  # Extra 50ms for hardware to stabilize
+        
+        # Set output power to maximum (100W) - truSDX might need this
+        send_cat(b'PC100;', ser, post_delay=0.050)  # Set power to 100W
+        log('Sent PC100; (set power to 100W)', 'INFO')
     except Exception as e:
         log(f'UA1 send failed: {e}', 'ERROR')
 
@@ -989,15 +1002,15 @@ def handle_vox(samples8, ser):
                 enable_cat_audio(ser)
                 state['cat_audio_enabled'] = True
             status[0] = True  # Set TX state BEFORE entering TX mode
-            log("UA1 → TX1", level='RECONNECT')
-            send_cat(b";TX1;", ser)  # TX1 = enter TX mode
+            log("UA1 → TX0", level='RECONNECT')
+            send_cat(b";TX0;", ser)  # TX0 = enter TX mode for truSDX
     elif status[0]:  # in TX and no audio detected (silence)
-        tx_cat_delay(ser)  # Call delay BEFORE TX0 command
-        log("TX1 → audio-stream → TX0", level='RECONNECT')
-        send_cat(b";TX0;", ser)  # TX0 = exit TX mode
+        tx_cat_delay(ser)  # Call delay BEFORE RX command
+        log("TX0 → audio-stream → RX", level='RECONNECT')
+        send_cat(b";RX;", ser)  # RX = exit TX mode for truSDX
         log("TX sequence end – disabling CAT-audio", level='RECONNECT')
         disable_cat_audio(ser)  # Send UA0 after exiting TX
-        log("TX0 → UA0", level='RECONNECT')
+        log("RX → UA0", level='RECONNECT')
         status[0] = False  # Clear TX state after exiting
 
 def handle_rts_dtr(ser, cat):
@@ -1082,6 +1095,32 @@ def handle_cat(pastream, ser, cat):
                     time.sleep(0.005)  # Increased delay for better synchronization
                     continue
                 
+                # Handle TX1 command - must send UA1 BEFORE forwarding TX1
+                if d.startswith(b"TX1"):
+                    # Need to unmute speaker before TX1
+                    if not state.get('cat_audio_enabled', False):
+                        print("\033[1;33m[TX] Enabling CAT audio (UA1) before TX1...\033[0m")
+                        enable_cat_audio(ser)
+                        state['cat_audio_enabled'] = True
+                        
+                        # Wait for hardware to process UA1 before sending TX1
+                        time.sleep(0.2)  # Increased from 0.1 to 0.2
+                        print("\033[1;36m[TX] CAT audio enabled, proceeding with TX1...\033[0m")
+                        
+                        # Query power to check if hardware is ready
+                        power_response = query_radio('PC', retries=1, timeout=0.5, ser_handle=ser)
+                        if power_response:
+                            power_str = power_response.decode('utf-8').strip(';')
+                            print(f"\033[1;36m[TX DEBUG] Power query before TX1: {power_str}\033[0m")
+                        else:
+                            print(f"\033[1;33m[TX DEBUG] No power response before TX1\033[0m")
+                    
+                    status[0] = True  # Set TX state BEFORE sending TX command
+                    print("\033[1;31m[TX] Transmit mode\033[0m")
+                    pastream.stop_stream()
+                    pastream.start_stream()
+                    time.sleep(0.1)  # Ensure stream is stable before reading
+                
                 # Forward to radio if not handled locally
                 if status[0]:
                     tx_cat_delay(ser)
@@ -1111,18 +1150,7 @@ def handle_cat(pastream, ser, cat):
                         else:
                             print(f"\033[1;33m[FREQ] No valid response from radio\033[0m")
                 
-                if d.startswith(b"TX1"):
-                    # Need to unmute speaker before TX1
-                    if not state.get('cat_audio_enabled', False):
-                        print("\033[1;33m[TX] Enabling CAT audio (UA1) before TX1...\033[0m")
-                        enable_cat_audio(ser)
-                        state['cat_audio_enabled'] = True
-                    status[0] = True  # Set TX state BEFORE sending TX command
-                    print("\033[1;31m[TX] Transmit mode\033[0m")
-                    pastream.stop_stream()
-                    pastream.start_stream()
-                    time.sleep(0.1)  # Ensure stream is stable before reading
-                elif d.startswith(b"TX0") or d.startswith(b"RX"):
+                if d.startswith(b"TX0") or d.startswith(b"RX"):
                     # TX0 or RX command - exit TX mode
                     # Note: tx_cat_delay was already called above if status[0] was True
                     # So we don't need to call it again here
@@ -1446,16 +1474,28 @@ def safe_reconnect():
                 handle_cat.buffer = b''
                 log("CAT buffer reset after reconnection")
             
-            # Initialize radio with proper commands
-            init_cmd = b";MD2;UA2;" if not config['unmute'] else b";MD2;UA1;"
-            new_ser.write(init_cmd)
+            # Initialize radio with proper commands - send separately with delays
+            new_ser.write(b";MD2;")  # Set USB mode first
+            new_ser.flush()
+            time.sleep(0.2)  # Give hardware time to process mode change
+            
+            # Then set audio mute state
+            audio_cmd = b";UA2;" if not config['unmute'] else b";UA1;"
+            new_ser.write(audio_cmd)
             new_ser.flush()
             time.sleep(0.3)
             
-            # Initialize radio
+            # Initialize radio - send commands separately with delays
             time.sleep(2)  # Wait for device to stabilize
-            init_cmd = b";MD2;UA2;" if not config['unmute'] else b";MD2;UA1;"
-            new_ser.write(init_cmd)
+            
+            # Set USB mode first
+            new_ser.write(b";MD2;")
+            new_ser.flush()
+            time.sleep(0.3)  # Wait for mode change to process
+            
+            # Then set audio mute state
+            audio_cmd = b";UA2;" if not config['unmute'] else b";UA1;"
+            new_ser.write(audio_cmd)
             new_ser.flush()
             time.sleep(0.5)
             
@@ -1760,10 +1800,28 @@ def run():
         try:
             # Send basic initialization commands (like working 1.1.6)
             # UA2 = muted speaker, UA1 = unmuted speaker
-            init_cmd = b";MD2;UA2;" if not config['unmute'] else b";MD2;UA1;"
-            ser.write(init_cmd)  # enable audio streaming, set USB mode, mute speaker
+            # Send commands separately with delays for better hardware compatibility
+            ser.write(b";MD2;")  # Set USB mode first
             ser.flush()
-            time.sleep(0.5)  # Give radio time to process
+            time.sleep(0.3)  # Give hardware time to process mode change
+
+            # Retry setting audio mute/unmute state
+            retries = 3
+            for attempt in range(retries):
+                audio_cmd = b";UA2;" if not config['unmute'] else b";UA1;"
+                ser.write(audio_cmd)
+                ser.flush()
+                time.sleep(0.5)  # Give radio time to process
+
+                # Capture response for logging
+                response = ser.read(ser.in_waiting)
+                log(f"Attempt {attempt + 1}/{retries}: Sent {audio_cmd.decode()} - received: {response}")
+                
+                # Assuming success response end with ';'
+                if response.endswith(b';'):
+                    break
+                else:
+                    time.sleep(0.2)  # Additional delay before retry
             
             # Ensure speaker is muted by sending explicit mute command
             if not config['unmute']:

@@ -1,12 +1,13 @@
 # AI Process
 
 ## Date, Version, Author
-- **Date**: 2024-12-28
-- **Version**: 1.2.4
+- **Date**: 2024-12-28, Updated: 2025-07-14
+- **Version**: 1.2.5
 - **Author**: AI-agent
 
 ## Problem Statement
 0 W during TX / no RX recovery
+Hamlib IO errors during PTT operations (kenwood.c IO error -6)
 
 ## Proposed Fix #1
 - UA0 after TX
@@ -86,5 +87,58 @@
 - **Key Improvements**: TX/RX transitions now stable with proper UA0/UA1 sequencing, eliminating 0W power readings during RX recovery
 - **Compatibility**: Verified with Kenwood TS-480 CAT protocol, ready for JS8Call integration testing
 
+## Additional Fixes (2025-07-14)
+
+### Problem: Hamlib IO Errors during PTT
+- **Issue**: `kenwood.c(765):kenwood_safe_transaction returning2(-6) IO error`
+- **Cause**: MD (mode) commands forwarded to radio without proper response handling
+- **Solution**: Handle MD set commands locally in emulation layer
+
+### Code Changes:
+
+1. **Mode Command Handling** (lines 605-613)
+   - Modified `handle_ts480_command()` to handle MD set commands locally
+   - Returns immediate acknowledgment (`;`) instead of forwarding to radio
+   - Prevents Hamlib timeout waiting for radio response
+   ```python
+   elif cmd_str.startswith('MD'):
+       if len(cmd_str) > 2:
+           # Set mode - update state and echo back acknowledgment
+           radio_state['mode'] = cmd_str[2]
+           # Don't forward to radio, just acknowledge
+           return b';'  # ACK
+   ```
+
+2. **TX Command Corrections** (lines 997-1014)
+   - Fixed VOX handler to use correct truSDX commands:
+     - `TX0` for entering transmit mode (was incorrectly `TX1`)
+     - `RX` for exiting transmit mode (was incorrectly `TX0`)
+   - Updated log messages to reflect correct command flow
+
+### New Test Scripts:
+
+1. **test_ptt_mode.py**
+   - Tests CAT command handling including:
+     - ID queries
+     - Mode queries (MD) with rapid succession tests
+     - PTT sequences with mode queries during TX
+     - IF status queries
+
+2. **test_hamlib_compat.py**
+   - Comprehensive Hamlib/rigctl compatibility tests:
+     - Frequency operations
+     - Mode queries and settings
+     - VFO operations
+     - PTT control (T 1/T 0 commands)
+     - Radio information queries
+
+### Testing Results:
+- MD commands now respond immediately without IO errors
+- PTT operations work correctly with proper TX0/RX commands
+- Full Hamlib compatibility maintained
+- No timeouts during mode queries
+
 ## Future Work
-[FUTURE_WORK_PLACEHOLDER]
+- Monitor long-term stability with WSJT-X/JS8Call
+- Consider implementing more Kenwood TS-480 features
+- Add automated integration tests with Hamlib

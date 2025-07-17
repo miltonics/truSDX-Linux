@@ -1,0 +1,4 @@
+51	alsa_output.pci-0000_00_1f.3.analog-stereo.monitor	PipeWire	s32le 2ch 48000Hz	SUSPENDED
+52	alsa_input.pci-0000_00_1f.3.analog-stereo	PipeWire	s32le 2ch 48000Hz	RUNNING
+104	TRUSDX.monitor	PipeWire	float32le 2ch 48000Hz	RUNNING
+162	TRUSDX.monitor.monitor	PipeWire	float32le 2ch 48000Hz	SUSPENDED
