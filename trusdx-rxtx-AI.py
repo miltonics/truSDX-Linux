@@ -266,40 +266,30 @@ def handle_ts480_command(cmd, ser):
         
         # IF command - return current status (critical for Hamlib)
         elif cmd_str == 'IF':
-            # Hamlib expects EXACTLY 37 characters (not including IF and ;)
-            # Format: IF<11-digit freq><5-digit RIT/XIT><RIT><XIT><Bank><RX/TX><Mode><VFO><Scan><Split><Tone><ToneFreq>;
-            # Total: IF + 37 chars + ; = 40 characters
+            # Returns basic transceiver status: frequency, mode, and other essentials
+            # Format: IF<11-digit freq>...<mode>...; (total 37 chars between IF and ;)
             
-            freq = radio_state['vfo_a_freq'][:11].ljust(11, '0')     # 11 digits
-            rit_xit = radio_state['rit_offset'][:5].ljust(5, '0')    # 5 digits  
-            rit = radio_state['rit'][:1].ljust(1, '0')               # 1 digit
-            xit = radio_state['xit'][:1].ljust(1, '0')               # 1 digit
-            bank = '00'                                              # 2 digits
-            rxtx = '0'                                               # 1 digit
-            mode = radio_state['mode'][:1].ljust(1, '2')             # 1 digit
-            vfo = '0'                                                # 1 digit
-            scan = '0'                                               # 1 digit
-            split = radio_state['split'][:1].ljust(1, '0')           # 1 digit
-            tone = '0'                                               # 1 digit
-            tone_freq = '08'                                         # 2 digits
-            ctcss = '00'                                             # 2 digits (missing!)
+            freq = radio_state['vfo_a_freq'].ljust(11, '0')
+            mode = radio_state['mode']
             
-            # Total should be: 11+5+1+1+2+1+1+1+1+1+1+2+2 = 30 chars
-            # We need 37 chars, so add 7 more padding
-            padding = '0000000'  # 7 digits padding
-            
-            # Build response: IF + 37 characters + ;
-            content = f'{freq}{rit_xit}{rit}{xit}{bank}{rxtx}{mode}{vfo}{scan}{split}{tone}{tone_freq}{ctcss}{padding}'
-            
-            # Ensure exactly 37 characters
-            content = content[:37].ljust(37, '0')
-            response = f'IF{content};'
-            
-            # Double-check length
-            if len(response) != 40:
-                # Known working 37-char format for TS-480
-                response = 'IF000140740000000000020000000800000;'
-            
+            # Construct a minimal but valid TS-480 IF response string
+            # This format is based on typical hamlib expectations
+            response = (
+                f"IF{freq}" +
+                "00000" +      # RIT/XIT offset
+                "0" +          # RIT off
+                "0" +          # XIT off
+                "00" +         # VFO bank
+                "0" +          # RX state
+                f"{mode}" +    # Mode
+                "0" +          # VFO A
+                "0" +          # Scan off
+                "0" +          # Split off
+                "0" +          # Tone off
+                "08" +         # 2.4k filter
+                "00" +         # CTCSS off
+                "0000000;"     # Padding to 37 chars
+            )
             return response.encode('utf-8')
         
         # AI command - auto information (critical for Hamlib)
@@ -409,7 +399,9 @@ def handle_ts480_command(cmd, ser):
             
         # Gain controls (return reasonable defaults)
         elif cmd_str.startswith('AG'):
-            if len(cmd_str) > 2:
+            if cmd_str == 'AG0;':
+                return cmd # Echo back
+            elif len(cmd_str) > 2:
                 return cmd  # Echo back
             else:
                 return b'AG0100;'  # AF gain 100
@@ -433,6 +425,20 @@ def handle_ts480_command(cmd, ser):
         # Generic commands that should just be acknowledged
         elif cmd_str in ['TX', 'RX']:
             return cmd
+
+        # VOX status
+        elif cmd_str.startswith('VX'):
+            if len(cmd_str) > 2:
+                # Set VOX status
+                return cmd # Echo back
+            else:
+                # Read VOX status (0 = off, 1 = on)
+                return b'VX0;'
+
+        # SWR reading
+        elif cmd_str == 'RS':
+            # Return a fixed SWR reading (e.g., 1.5:1)
+            return b'RS015;'
             
         # Filter and other commands
         elif cmd_str.startswith('FL') or cmd_str.startswith('IS') or cmd_str.startswith('NB') or cmd_str.startswith('NR'):
