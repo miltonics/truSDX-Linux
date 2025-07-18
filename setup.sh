@@ -5,8 +5,12 @@
 
 set -e
 
+LOG_FILE="setup.log"
+exec &> >(tee -a "$LOG_FILE")
+
 echo "=== truSDX-AI Driver Setup for Linux ==="
 echo "This script will install dependencies and configure audio for truSDX"
+echo "Full log is available in $LOG_FILE"
 echo
 
 # Check if running as root
