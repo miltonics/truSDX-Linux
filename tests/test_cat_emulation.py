@@ -226,6 +226,10 @@ class TestTS480CATEmulation(unittest.TestCase):
             response = self.send_cat_command(ser1, ser2, 'SL;')
             self.assertEqual(response, f'SL{test_low};')
 
+            # Test FL0 command
+            response = self.send_cat_command(ser1, ser2, 'FL0;')
+            self.assertEqual(response, 'FL0;')
+
     def test_preamp_attenuator(self):
         """Test preamp/attenuator operations"""
         with self.serial_loopback() as (ser1, ser2):
@@ -360,6 +364,9 @@ class TestTS480CATEmulation(unittest.TestCase):
             # Test AF gain
             response = self.send_cat_command(ser1, ser2, 'AG;')
             self.assertEqual(response, 'AG0100;')
+
+            response = self.send_cat_command(ser1, ser2, 'AG0;')
+            self.assertEqual(response, 'AG0;')
             
             # Test RF gain
             response = self.send_cat_command(ser1, ser2, 'RF;')
@@ -368,6 +375,17 @@ class TestTS480CATEmulation(unittest.TestCase):
             # Test squelch
             response = self.send_cat_command(ser1, ser2, 'SQ;')
             self.assertEqual(response, 'SQ0000;')
+
+    def test_swr_and_vox(self):
+        """Test SWR and VOX commands"""
+        with self.serial_loopback() as (ser1, ser2):
+            # Test SWR reading
+            response = self.send_cat_command(ser1, ser2, 'RS;')
+            self.assertEqual(response, 'RS015;')
+
+            # Test VOX reading
+            response = self.send_cat_command(ser1, ser2, 'VX;')
+            self.assertEqual(response, 'VX0;')
 
     def test_ex_menu_commands(self):
         """Test EX menu commands"""
