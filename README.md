@@ -8,6 +8,7 @@ A Python-based CAT interface driver that enables seamless integration between th
 - **TX/RX Control**: Handles transmission switching for JS8Call
 - **VU Meter Support**: Visual transmission feedback during operation  
 - **CAT Command Forwarding**: Transparent command passing between JS8Call and radio
+- **RTS/DTR Driver Shim**: Neutralizes RTS/DTR flags to prevent hardware conflicts
 - **Robust Error Handling**: Multiple retry attempts with comprehensive debugging
 - **Auto-detection**: Automatically finds TruSDX USB device
 
@@ -23,11 +24,26 @@ A Python-based CAT interface driver that enables seamless integration between th
    ```bash
    python3 trusdx-txrx-AI.py
    ```
+   
+   Or for verbose mode with device indices:
+   ```bash
+   python3 trusdx-txrx-AI.py --verbose
+   ```
 
 3. **Configure JS8Call:**
-   - Set CAT control to use TCP/IP connection
-   - Host: `localhost` 
-   - Port: `4532`
+   
+   **CAT Control:**
+   - Radio: Kenwood TS-480
+   - CAT Control Port: `/tmp/trusdx_cat`
+   - Baud Rate: 115200
+   - Data Bits: 8, Stop Bits: 1, Handshake: None
+   - PTT Method: CAT
+   
+   **Audio Configuration:**
+   - Audio Input (from radio): `TRUSDX.monitor`
+   - Audio Output (to radio): `TRUSDX`
+   
+   The driver automatically creates the TRUSDX audio sink if missing.
 
 ## Requirements
 
@@ -43,6 +59,45 @@ See `INSTALL.txt` for detailed installation instructions.
 ## Usage
 
 See `USAGE.md` for quick usage guide and troubleshooting tips.
+
+### Audio Connection Utility
+
+A helper script `trusdx-audio-connect.sh` is provided to manage audio connections:
+
+```bash
+# Interactive mode
+./trusdx-audio-connect.sh
+
+# Command line mode
+./trusdx-audio-connect.sh connect js8call
+./trusdx-audio-connect.sh verify
+./trusdx-audio-connect.sh test
+```
+
+The utility provides:
+- Automatic TRUSDX sink creation
+- Application audio routing (JS8Call, WSJT-X, FLDigi)
+- Connection verification
+- Audio recording test with `parecord`
+
+## RTS/DTR Driver Shim (New in v1.2.1)
+
+The driver now includes an intelligent RTS/DTR neutralization system that prevents hardware conflicts:
+
+- **Automatic Detection**: Monitors for RTS/DTR control signals from CAT software
+- **Signal Neutralization**: Safely absorbs RTS/DTR flags before they reach hardware
+- **Hardware Protection**: Prevents potential conflicts with TruSDX USB interface
+- **Transparent Operation**: Works seamlessly with JS8Call, WSJT-X, and other CAT software
+- **Backward Compatibility**: Maintains compatibility with existing configurations
+
+**Benefits:**
+- Eliminates need to manually disable RTS/DTR in client software
+- Prevents "driver shim active" messages in system logs
+- Ensures stable USB communication with TruSDX hardware
+- Reduces potential for USB disconnections during operation
+
+**Technical Details:**
+The shim operates at the Python pyserial level, intercepting RTS/DTR property access and method calls. This approach is transparent to both the hardware and client software, providing a robust solution that works across different operating systems and CAT applications.
 
 ## Contributing
 

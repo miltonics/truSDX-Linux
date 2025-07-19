@@ -16,7 +16,7 @@ PROVEN WORKING - CONTACT MADE!
    - Enter password when prompted for sudo
 
 4. START DRIVER
-   - Run: ./trusdx-rxtx-AI.py (or ./trusdx-txrx-AI.py - both are equivalent)
+   - Run: ./trusdx-txrx-AI.py
    - Leave terminal open while using
 
 5. CONFIGURE WSJT-X
@@ -34,28 +34,10 @@ PROVEN WORKING - CONTACT MADE!
    - Try changing frequency/band
    - Make a contact!
 
-TROUBLESHOOTING:
-
-CH341 KERNEL MODULE:
-- Check if loaded: lsmod | grep ch341
-- Load manually: sudo modprobe ch341
-- Verify USB: dmesg | grep ch341
-
-PULSEAUDIO SINK:
-- Check exists: pactl list sinks short | grep TRUSDX
-- Create manually: pactl load-module module-null-sink sink_name=TRUSDX
-- Audio control: pavucontrol
-
-DIALOUT GROUP:
-- Check membership: groups $USER | grep dialout
-- Add to group: sudo usermod -a -G dialout $USER
-- IMPORTANT: Log out and back in after group change
-
-OTHER ISSUES:
-- No audio: Check pavucontrol routing, run 'pavucontrol'
-- No CAT: Check USB connection and restart driver
-- Permission denied: Never run as root/sudo
-- For detailed help: run with --verbose flag
+TROUBLESHOTING:
+- If no audio: run 'pavucontrol' and check routing
+- If no CAT: check USB connection and restart driver
+- For help: run with --verbose flag
 
 Enjoy and 73!
 
