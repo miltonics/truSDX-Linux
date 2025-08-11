@@ -133,9 +133,20 @@ pcm.trusdx_rx {
     type plug
     slave.pcm "hw:Loopback,1,0"
 }
+
+# Application-friendly aliases
+pcm.trusdx_tx_app {
+    type plug
+    slave.pcm "hw:Loopback,0,0"
+}
+
+pcm.trusdx_rx_app {
+    type plug
+    slave.pcm "hw:Loopback,1,0"
+}
 ALSA
     
-    echo -e "${c_green}Created ALSA PCM devices: trusdx_tx and trusdx_rx${c_reset}"
+    echo -e "${c_green}Created ALSA PCM devices: trusdx_tx, trusdx_rx, trusdx_tx_app, and trusdx_rx_app${c_reset}"
     
     # Restore ALSA settings
     alsactl restore 2>/dev/null || true
@@ -191,10 +202,19 @@ except Exception as e:
 PY
 
 # Verify ALSA loopback devices
+echo -e "${c_blue}Checking ALSA PCM aliases...${c_reset}"
+aplay -L 2>/dev/null | grep trusdx_ || {
+  echo -e "${c_yellow}⚠ WARNING: ALSA PCM aliases not visible yet!${c_reset}"
+  echo -e "${c_yellow}  The aliases (trusdx_tx, trusdx_rx, trusdx_tx_app, trusdx_rx_app) may require:${c_reset}"
+  echo -e "${c_yellow}  • Logout and login again${c_reset}"
+  echo -e "${c_yellow}  • Or restart ALSA: sudo alsa force-reload${c_reset}"
+  echo -e "${c_yellow}  • Or reboot the system${c_reset}"
+}
 if aplay -L 2>/dev/null | grep -q "trusdx_"; then
-  echo "✓ ALSA trusdx_tx and trusdx_rx devices configured"
-else
-  echo "⚠ ALSA devices not visible yet - may need to logout/login"
+  echo -e "${c_green}✓ ALSA PCM aliases are visible:${c_reset}"
+  aplay -L 2>/dev/null | grep trusdx_ | while read -r line; do
+    echo "  • $line"
+  done
 fi
 
 echo
@@ -221,8 +241,8 @@ echo -e "For WSJT-X/JS8Call configuration:"
 echo -e "  • Radio: Kenwood TS-480"
 echo -e "  • Port: /tmp/trusdx_cat"
 echo -e "  • Baud: 115200"
-echo -e "  • Audio Input: ALSA Loopback card 0 (hw:Loopback,1,0 or trusdx_rx)"
-echo -e "  • Audio Output: ALSA Loopback card 0 (hw:Loopback,0,0 or trusdx_tx)"
+echo -e "  • Audio Input: trusdx_rx_app (or hw:Loopback,1,0)"
+echo -e "  • Audio Output: trusdx_tx_app (or hw:Loopback,0,0)"
 echo -e "${c_yellow}Troubleshooting: If hw:Loopback does not exist, run 'sudo modprobe snd-aloop' and reboot${c_reset}"
 
 echo
