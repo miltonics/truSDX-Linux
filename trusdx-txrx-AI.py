@@ -1,13 +1,75 @@
 #!/usr/bin/env python3
+"""
+TruSDX AI-Enhanced Transceiver Control Software
+===============================================
+Enhanced AI version with Kenwood TS-480 CAT interface and persistent serial ports
+
+Authors: SQ3SWF, PE1NNZ 2023, AI-Enhanced 2025
+Version: 1.2.4 (2025-01-13)
+
+Compatibility:
+-------------
+* Tested on: Linux Mint 21/22, Ubuntu 24.04, Fedora 40
+* Requires: Python 3.12+
+* Hardware: TruSDX transceiver with USB connection
+* Software: Compatible with WSJT-X, JS8Call, FlDigi, Winlink
+
+Audio Devices (ALSA & PipeWire):
+--------------------------------
+* ALSA Loopback: Uses snd-aloop module to create trusdx_tx and trusdx_rx devices
+* PipeWire: Setup script creates TRUSDX (sink) and TRUSDX.monitor (source) virtual devices
+* Both backends work seamlessly - use whichever is available on your system
+* In WSJT-X/JS8Call:
+  - Output: Select "TRUSDX" (PipeWire) or "trusdx_tx" (ALSA)
+  - Input: Select "TRUSDX.monitor" (PipeWire) or "trusdx_rx" (ALSA)
+
+Quick-Start Commands:
+--------------------
+Linux:
+  1. Run setup script (installs everything):
+     ./setup.sh
+  
+  2. Run the driver:
+     ./trusdx-txrx-AI.py
+  
+  That's it! The setup script handles all dependencies and configuration.
+  
+  Manual setup (if needed):
+  - Configure serial port: stty -F /dev/ttyUSB0 raw -echo -echoe -echoctl -echoke -hupcl 115200
+  - If `hw:Loopback` does not exist, run `sudo modprobe snd-aloop` and reboot
+  - For PipeWire systems, the setup script creates TRUSDX virtual audio devices automatically
+  - Test with Hamlib: python3 test_hamlib_compat.py
+
+Windows:
+  See detailed Windows setup instructions below in comments.
+
+Dependencies:
+------------
+* pyserial >= 3.5 - Serial port communication
+* pyaudio - Audio stream handling
+* portaudio19-dev (Linux) - Audio library backend
+* socat (optional) - Virtual serial port creation for testing
+
+Notes:
+-----
+* Run ./setup.sh first to install all dependencies
+* Logs are saved to ./logs/ directory for debugging  
+* Configuration persists in ~/.config/trusdx-ai.json
+* The driver will create persistent serial port symlinks for CAT control
+* PipeWire virtual sinks (TRUSDX/TRUSDX.monitor) are created if PipeWire is detected
+* ALSA loopback devices (trusdx_tx/trusdx_rx) are always configured as fallback
+"""
+
 # de SQ3SWF, PE1NNZ 2023
 # Enhanced AI version with Kenwood TS-480 CAT interface and persistent serial ports
-# Version: 1.2.3 (2025-07-10)
+# Version: 1.2.4 (2025-01-13) - Python 3.12+ compatible
 
 # Linux:
 # sudo apt install portaudio19-dev
 # stty -F /dev/ttyUSB0 raw -echo -echoe -echoctl -echoke -hupcl 115200;
-# pactl load-module module-null-sink sink_name=TRUSDX sink_properties=device.description="TRUSDX"
-# pavucontrol
+# sudo modprobe snd-aloop  # Load ALSA loopback module for card 0
+# Configure ALSA Loopback card 0 devices (done by setup.sh)
+# If `hw:Loopback` does not exist, run `sudo modprobe snd-aloop` and reboot
 ###
 
 # Windows 7:
@@ -36,9 +98,8 @@
 # socat -d -d pty,link=/tmp/ttyS0,echo=0,ignoreeof,b115200,raw,perm=0777 pty,link=/tmp/ttyS1,echo=0,ignoreeof,b115200,raw,perm=0777 &
 # sudo modprobe snd-aloop
 
-import pyaudio
-import serial
-import serial.tools.list_ports
+# Standard library imports first
+import sys
 import threading
 import time
 import os
@@ -47,18 +108,39 @@ import array
 import argparse
 import json
 import configparser
+import subprocess
+import atexit
 from sys import platform
-import sys
+
+# Import required modules with helpful error messages
+try:
+    import serial
+    import serial.tools.list_ports
+except ImportError:
+    print("\033[1;31m[ERROR] pyserial not installed!\033[0m")
+    print("Please run: ./setup.sh")
+    print("Or manually: sudo pip3 install pyserial")
+    sys.exit(1)
+
+try:
+    import pyaudio
+except ImportError:
+    print("\033[1;31m[ERROR] pyaudio not installed!\033[0m")
+    print("Please run: ./setup.sh")
+    print("Or manually: sudo apt install portaudio19-dev && sudo pip3 install pyaudio")
+    sys.exit(1)
 
 # Version information
-VERSION = "1.2.3"
-BUILD_DATE = "2025-07-10"
-AUTHOR = "SQ3SWF, PE1NNZ, AI-Enhanced - MONITORING & RECONNECT"
+VERSION = "1.2.4"
+BUILD_DATE = "2025-01-13"
+AUTHOR = "SQ3SWF, PE1NNZ, AI-Enhanced - Python 3.12+ Compatible"
 COMPATIBLE_PROGRAMS = ["WSJT-X", "JS8Call", "FlDigi", "Winlink"]
+MIN_PYTHON_VERSION = (3, 12)
 
+# Audio rate constants - compatible with both ALSA loopback and PipeWire backends
 audio_tx_rate_trusdx = 4800
-audio_tx_rate = 11520  #11521
-audio_rx_rate = 7812
+audio_tx_rate = 48000  # Use standard 48kHz for ALSA Loopback/PipeWire compatibility
+audio_rx_rate = 48000   # Use standard 48kHz for ALSA Loopback/PipeWire compatibility
 buf = []    # buffer for received audio
 urs = [0]   # underrun counter
 status = [False, False, True, False, False, False]	# tx_state, cat_streaming_state, running, cat_active, keyed_by_rts_dtr, tx_connection_lost
@@ -73,7 +155,8 @@ state = {
     'connection_stable': True,
     'last_data_time': time.time(),
     'reconnect_count': 0,
-    'hardware_disconnected': False
+    'hardware_disconnected': False,
+    'pyaudio_instance': None  # Shared PyAudio instance
 }
 
 # Thread-safe locks for handle replacement and monitoring
@@ -83,8 +166,8 @@ monitor_lock = threading.Lock()
 # Connection monitoring settings
 CONNECTION_TIMEOUT = 3.0  # Seconds without data before considering connection lost (reduced for TX)
 TX_CONNECTION_TIMEOUT = 1.5  # Faster detection for TX mode
-RECONNECT_DELAY = 1.0     # Faster reconnection (reduced from 2.0)
-MAX_RECONNECT_ATTEMPTS = 3 # Reduced attempts for faster recovery
+RECONNECT_DELAY = 2.0     # Give hardware time to settle
+MAX_RECONNECT_ATTEMPTS = 0 # 0 = infinite attempts (never give up)
 MAX_RETRIES = 5           # Maximum retries before exiting with error
 
 # Power monitoring settings
@@ -130,12 +213,77 @@ TS480_COMMANDS = {
 CONFIG_FILE = '/home/milton/.config/trusdx-ai.json'
 PERSISTENT_PORTS = {
     'cat_port': '/tmp/trusdx_cat',
-    'audio_device': 'TRUSDX'
+    'audio_device': 'ALSA Loopback card 0'
 }
+
+# Audio stream retry settings
+AUDIO_RETRY_COUNT = 10  # Number of retries for device-busy errors
+AUDIO_RETRY_DELAY = 0.5  # Delay in seconds between retries
+AUDIO_RECHECK_INTERVAL = 2.0  # How often to recheck for stream availability
 
 # Global logging configuration
 LOG_FILE = None
 LOG_LOCK = threading.Lock()
+
+# Cleanup handlers registration
+def cleanup_at_exit():
+    """Clean up resources at exit to prevent Python 3.12 shutdown crashes"""
+    global state
+    
+    try:
+        print("\n\033[1;33m[CLEANUP] Shutting down gracefully...\033[0m")
+        
+        # Stop all threads
+        status[2] = False
+        time.sleep(0.5)  # Give threads time to stop
+        
+        # Close serial ports
+        if state.get('ser'):
+            try:
+                state['ser'].write(b";UA0;")  # Mute radio before closing
+                state['ser'].close()
+                print("\033[1;32m[CLEANUP] ✅ Closed primary serial port\033[0m")
+            except:
+                pass
+        
+        if state.get('ser2') and state['ser2'] != state.get('ser'):
+            try:
+                state['ser2'].close()
+                print("\033[1;32m[CLEANUP] ✅ Closed secondary serial port\033[0m")
+            except:
+                pass
+        
+        # Close audio streams
+        if state.get('in_stream'):
+            try:
+                state['in_stream'].stop_stream()
+                state['in_stream'].close()
+                print("\033[1;32m[CLEANUP] ✅ Closed input audio stream\033[0m")
+            except:
+                pass
+        
+        if state.get('out_stream'):
+            try:
+                state['out_stream'].stop_stream()
+                state['out_stream'].close()
+                print("\033[1;32m[CLEANUP] ✅ Closed output audio stream\033[0m")
+            except:
+                pass
+        
+        # Terminate PyAudio instance
+        if state.get('pyaudio_instance'):
+            try:
+                state['pyaudio_instance'].terminate()
+                print("\033[1;32m[CLEANUP] ✅ Terminated PyAudio instance\033[0m")
+            except:
+                pass
+        
+        print("\033[1;32m[CLEANUP] ✅ Cleanup complete\033[0m")
+    except Exception as e:
+        print(f"\033[1;31m[CLEANUP] Error during cleanup: {e}\033[0m")
+
+# Register cleanup handler
+atexit.register(cleanup_at_exit)
 
 def setup_logging():
     """Setup logging with file rotation per run"""
@@ -163,6 +311,8 @@ def setup_logging():
                 f.write(f"Build Date: {BUILD_DATE}\n")
                 f.write(f"Platform: {platform}\n")
                 f.write("=" * 80 + "\n")
+        except KeyboardInterrupt:
+            raise
         except Exception as e:
             print(f"Warning: Could not initialize log file {LOG_FILE}: {e}")
             LOG_FILE = None
@@ -182,7 +332,9 @@ def log(msg, level="INFO"):
             try:
                 with open(LOG_FILE, 'a') as f:
                     f.write(f"[{timestamp}] {level}: {msg}\n")
-            except Exception as e:
+            except KeyboardInterrupt:
+                raise
+            except Exception:
                 # Silently continue if file logging fails
                 pass
     
@@ -212,7 +364,7 @@ def show_persistent_header():
     print(f"\033[1;36mtruSDX-AI Driver v{VERSION}\033[0m - \033[1;33m{BUILD_DATE}\033[0m")
     print(f"\033[1;37mConnections for WSJT-X/JS8Call:\033[0m")
     print(f"\033[1;35m  Radio:\033[0m Kenwood TS-480 | \033[1;35mPort:\033[0m {PERSISTENT_PORTS['cat_port']} | \033[1;35mBaud:\033[0m 115200 | \033[1;35mPoll:\033[0m 80ms")
-    print(f"\033[1;35m  Audio:\033[0m {PERSISTENT_PORTS['audio_device']} (Input/Output) | \033[1;35mPTT:\033[0m CAT | \033[1;35mStatus:\033[0m Ready")
+    print(f"\033[1;35m  Audio:\033[0m ALSA trusdx_tx / trusdx_rx | \033[1;35mPTT:\033[0m CAT | \033[1;35mStatus:\033[0m Ready")
     print("\033[1;32m" + "="*80 + "\033[0m")  # Green header line
     print()
     # Set scrolling region to start after header (lines 7 onwards)
@@ -231,6 +383,141 @@ def refresh_header_only(power_info=None):
     # Move to top and redraw header with power info
     print("\033[2J", end="")  # Clear entire screen
     print("\033[H", end="")   # Move cursor to home position
+
+def open_audio_streams(platform_config, config, state, retry_on_busy=True):
+    """Open audio input and output streams with retry logic for device-busy errors.
+    
+    Args:
+        platform_config: Platform-specific configuration dict
+        config: Main configuration dict
+        state: Global state dict to store stream handles
+        retry_on_busy: Whether to retry on -9985 device-busy errors
+    
+    Returns:
+        tuple: (in_stream, out_stream) - Either or both may be None if unavailable
+    """
+    # Initialize shared PyAudio instance if not already created
+    if not state.get('pyaudio_instance'):
+        try:
+            state['pyaudio_instance'] = pyaudio.PyAudio()
+            log("[AUDIO] Created shared PyAudio instance")
+        except Exception as e:
+            log(f"[AUDIO] Failed to create PyAudio instance: {e}", "ERROR")
+            print(f"\033[1;31m[AUDIO] ❌ Failed to initialize PyAudio: {e}\033[0m")
+            return None, None
+    
+    # Get device indices
+    virtual_audio_dev_out = platform_config.get('virtual_audio_dev_out')
+    virtual_audio_dev_in = platform_config.get('virtual_audio_dev_in')
+    in_device_idx = find_audio_device(virtual_audio_dev_out) if virtual_audio_dev_out else -1
+    out_device_idx = find_audio_device(virtual_audio_dev_in) if virtual_audio_dev_in else -1
+    
+    if config.get('verbose', False):
+        print(f"\033[1;36m[AUDIO] Opening streams - Input: {virtual_audio_dev_out} (idx: {in_device_idx}), Output: {virtual_audio_dev_in} (idx: {out_device_idx})\033[0m")
+    
+    in_stream = None
+    out_stream = None
+    
+    # Try to open input stream with retry logic
+    for attempt in range(AUDIO_RETRY_COUNT if retry_on_busy else 1):
+        try:
+            log(f"[AUDIO] Opening input stream, attempt {attempt + 1}/{AUDIO_RETRY_COUNT}")
+            in_stream = state['pyaudio_instance'].open(
+                frames_per_buffer=config['block_size'],
+                format=pyaudio.paInt16,
+                channels=1,
+                rate=audio_tx_rate,
+                input=True,
+                input_device_index=in_device_idx
+            )
+            log(f"[AUDIO] ✅ Successfully opened input stream from '{virtual_audio_dev_out}'")
+            print(f"\033[1;32m[AUDIO] ✅ Input stream opened successfully\033[0m")
+            break
+        except OSError as e:
+            error_code = getattr(e, 'errno', None) or (e.args[0] if e.args else None)
+            if error_code == -9985:  # Device unavailable/busy
+                log(f"[AUDIO] Device busy error -9985 on input stream, attempt {attempt + 1}/{AUDIO_RETRY_COUNT}")
+                if attempt < AUDIO_RETRY_COUNT - 1 and retry_on_busy:
+                    # Check if WSJT-X/JS8Call might have released the device
+                    print(f"\033[1;33m[AUDIO] Input device busy, waiting {AUDIO_RETRY_DELAY}s before retry {attempt + 2}/{AUDIO_RETRY_COUNT}...\033[0m")
+                    time.sleep(AUDIO_RETRY_DELAY)
+                    
+                    # Periodically check if we can detect WSJT-X/JS8Call status
+                    if attempt % 4 == 3:  # Every 4th attempt
+                        print(f"\033[1;36m[AUDIO] Checking if WSJT-X/JS8Call released the audio device...\033[0m")
+                        time.sleep(AUDIO_RECHECK_INTERVAL)
+                else:
+                    # Max retries reached or retry disabled
+                    log(f"[AUDIO] Input device remains busy after {attempt + 1} attempts, continuing without input audio", "WARNING")
+                    print(f"\033[1;33m[AUDIO] ⚠️ Input audio device busy - continuing without TX audio\033[0m")
+                    print(f"\033[1;33m[AUDIO] The driver will continue running and retry when device becomes available\033[0m")
+                    break
+            else:
+                # Non-9985 error, don't retry
+                log(f"[AUDIO] Error opening input stream: {e}", "ERROR")
+                print(f"\033[1;31m[AUDIO] ❌ Failed to open input stream: {e}\033[0m")
+                break
+        except Exception as e:
+            log(f"[AUDIO] Unexpected error opening input stream: {e}", "ERROR")
+            print(f"\033[1;31m[AUDIO] ❌ Unexpected error opening input stream: {e}\033[0m")
+            break
+    
+    # Try to open output stream with retry logic
+    for attempt in range(AUDIO_RETRY_COUNT if retry_on_busy else 1):
+        try:
+            log(f"[AUDIO] Opening output stream, attempt {attempt + 1}/{AUDIO_RETRY_COUNT}")
+            out_stream = state['pyaudio_instance'].open(
+                frames_per_buffer=512,  # Use proper buffer size instead of 0
+                format=pyaudio.paInt16,  # Use 16-bit format for better compatibility
+                channels=1,
+                rate=audio_rx_rate,
+                output=True,
+                output_device_index=out_device_idx
+            )
+            log(f"[AUDIO] ✅ Successfully opened output stream to '{virtual_audio_dev_in}'")
+            print(f"\033[1;32m[AUDIO] ✅ Output stream opened successfully\033[0m")
+            break
+        except OSError as e:
+            error_code = getattr(e, 'errno', None) or (e.args[0] if e.args else None)
+            if error_code == -9985:  # Device unavailable/busy
+                log(f"[AUDIO] Device busy error -9985 on output stream, attempt {attempt + 1}/{AUDIO_RETRY_COUNT}")
+                if attempt < AUDIO_RETRY_COUNT - 1 and retry_on_busy:
+                    # Check if WSJT-X/JS8Call might have released the device
+                    print(f"\033[1;33m[AUDIO] Output device busy, waiting {AUDIO_RETRY_DELAY}s before retry {attempt + 2}/{AUDIO_RETRY_COUNT}...\033[0m")
+                    time.sleep(AUDIO_RETRY_DELAY)
+                    
+                    # Periodically check if we can detect WSJT-X/JS8Call status
+                    if attempt % 4 == 3:  # Every 4th attempt
+                        print(f"\033[1;36m[AUDIO] Checking if WSJT-X/JS8Call released the audio device...\033[0m")
+                        time.sleep(AUDIO_RECHECK_INTERVAL)
+                else:
+                    # Max retries reached or retry disabled
+                    log(f"[AUDIO] Output device remains busy after {attempt + 1} attempts, continuing without output audio", "WARNING")
+                    print(f"\033[1;33m[AUDIO] ⚠️ Output audio device busy - continuing without RX audio\033[0m")
+                    print(f"\033[1;33m[AUDIO] The driver will continue running and retry when device becomes available\033[0m")
+                    break
+            else:
+                # Non-9985 error, don't retry
+                log(f"[AUDIO] Error opening output stream: {e}", "ERROR")
+                print(f"\033[1;31m[AUDIO] ❌ Failed to open output stream: {e}\033[0m")
+                break
+        except Exception as e:
+            log(f"[AUDIO] Unexpected error opening output stream: {e}", "ERROR")
+            print(f"\033[1;31m[AUDIO] ❌ Unexpected error opening output stream: {e}\033[0m")
+            break
+    
+    # Log final status
+    if in_stream and out_stream:
+        log("[AUDIO] Both audio streams opened successfully")
+        print(f"\033[1;32m[AUDIO] ✅ All audio streams ready\033[0m")
+    elif in_stream or out_stream:
+        log(f"[AUDIO] Partial audio streams: in={in_stream is not None}, out={out_stream is not None}", "WARNING")
+        print(f"\033[1;33m[AUDIO] ⚠️ Partial audio available (TX: {in_stream is not None}, RX: {out_stream is not None})\033[0m")
+    else:
+        log("[AUDIO] No audio streams available, driver will continue without audio", "WARNING")
+        print(f"\033[1;33m[AUDIO] ⚠️ No audio streams available - driver running in CAT-only mode\033[0m")
+    
+    return in_stream, out_stream
     print("\033[1;32m" + "="*80 + "\033[0m")  # Green header line
     print(f"\033[1;36mtruSDX-AI Driver v{VERSION}\033[0m - \033[1;33m{BUILD_DATE}\033[0m")
     print(f"\033[1;37mConnections for WSJT-X/JS8Call:\033[0m")
@@ -246,7 +533,7 @@ def refresh_header_only(power_info=None):
             status_line += f" | \033[1;32mPower: {power_info.get('watts', 0)}W\033[0m"
     
     print(status_line)
-    print(f"\033[1;35m  Audio:\033[0m {PERSISTENT_PORTS['audio_device']} (Input/Output) | \033[1;35mPTT:\033[0m CAT | \033[1;35mStatus:\033[0m Ready")
+    print(f"\033[1;35m  Audio:\033[0m ALSA trusdx_tx / trusdx_rx | \033[1;35mPTT:\033[0m CAT | \033[1;35mStatus:\033[0m Ready")
     print("\033[1;32m" + "="*80 + "\033[0m")  # Green header line
     print()
     
@@ -275,8 +562,8 @@ def show_version_info():
     print("  Handshake: None")
     print("  PTT Method: CAT or RTS/DTR")
     print("\nAudio Configuration:")
-    print(f"  Input Device: {PERSISTENT_PORTS['audio_device']}")
-    print(f"  Output Device: {PERSISTENT_PORTS['audio_device']}")
+    print("  Input Device: ALSA trusdx_rx (Loopback card 0)")
+    print("  Output Device: ALSA trusdx_tx (Loopback card 0)")
     print("  Sample Rate: 48000 Hz")
     print("  Channels: 1 (Mono)")
     print("\nSupported Programs:")
@@ -294,6 +581,8 @@ def load_config():
         if os.path.exists(CONFIG_FILE):
             with open(CONFIG_FILE, 'r') as f:
                 return json.load(f)
+    except KeyboardInterrupt:
+        raise
     except Exception as e:
         log(f"Error loading config: {e}")
     return PERSISTENT_PORTS.copy()
@@ -304,6 +593,8 @@ def save_config(config_data):
         os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
         with open(CONFIG_FILE, 'w') as f:
             json.dump(config_data, f, indent=2)
+    except KeyboardInterrupt:
+        raise
     except Exception as e:
         log(f"Error saving config: {e}")
 
@@ -319,50 +610,13 @@ def create_persistent_serial_ports():
         os.makedirs(os.path.dirname(PERSISTENT_PORTS['cat_port']), exist_ok=True)
         
         return True
+    except KeyboardInterrupt:
+        raise
     except Exception as e:
         log(f"Error creating persistent ports: {e}")
         return False
 
-def check_audio_setup():
-    """Check if TRUSDX audio device is properly configured"""
-    try:
-        # Check if TRUSDX sink exists
-        result = os.popen('pactl list sinks | grep -c "Name: TRUSDX"').read().strip()
-        if result == '0':
-            print(f"\033[1;33m[AUDIO] TRUSDX sink not found, auto-loading module-null-sink...\033[0m")
-            # Auto-load module-null-sink with TRUSDX name
-            load_result = os.popen('pactl load-module module-null-sink sink_name=TRUSDX sink_properties=device.description="TRUSDX"').read().strip()
-            if load_result.isdigit():
-                print(f"\033[1;32m[AUDIO] ✅ TRUSDX sink created successfully (module ID: {load_result})\033[0m")
-                log(f"Loaded module-null-sink TRUSDX with module ID: {load_result}")
-            else:
-                print(f"\033[1;31m[AUDIO] ❌ Failed to create TRUSDX sink: {load_result}\033[0m")
-                log(f"Failed to load module-null-sink: {load_result}")
-                return False
-            time.sleep(1)
-        else:
-            print(f"\033[1;32m[AUDIO] ✅ TRUSDX sink already exists\033[0m")
-        
-        # Verify it exists now and get its index
-        sink_info = os.popen('pactl list sinks | grep -A 2 "Name: TRUSDX"').read()
-        if 'TRUSDX' in sink_info:
-            # Extract sink index if available
-            lines = sink_info.split('\n')
-            for i, line in enumerate(lines):
-                if 'Sink #' in line:
-                    sink_index = line.split('#')[1].strip()
-                    print(f"\033[1;36m[AUDIO] TRUSDX sink index: {sink_index}\033[0m")
-                    log(f"TRUSDX sink index: {sink_index}")
-                    break
-            return True
-        else:
-            print(f"\033[1;31m[AUDIO] ❌ TRUSDX sink verification failed\033[0m")
-            return False
-        
-    except Exception as e:
-        log(f"Audio setup error: {e}")
-        print(f"\033[1;31m[AUDIO] Error during setup: {e}\033[0m")
-        return False
+# check_audio_setup() removed - now using ALSA loopback directly
 
 def query_radio(cmd, retries=3, timeout=0.2, ser_handle=None):
     """Query radio with command and retry logic
@@ -604,9 +858,10 @@ def handle_ts480_command(cmd, ser):
         # Mode commands
         elif cmd_str.startswith('MD'):
             if len(cmd_str) > 2:
-                # Set mode - forward to hardware and update state
+                # Set mode - update state and echo back acknowledgment
                 radio_state['mode'] = cmd_str[2]
-                return None  # Forward to radio
+                # Don't forward to radio, just acknowledge
+                return b';'  # ACK
             else:
                 # Read mode
                 return f'MD{radio_state["mode"]};'.encode('utf-8')
@@ -706,7 +961,7 @@ def handle_ts480_command(cmd, ser):
         
         # PTT operations - must forward to truSDX hardware
         elif cmd_str == 'TX':
-            # Query TX status
+            # Query TX status - TX0 = in TX mode, TX1 = in RX mode
             return b'TX0;' if status[0] else b'TX1;'
         elif cmd_str.startswith('TX'):
             # TX command with mode (TX1 = enter TX mode, TX0 = exit TX mode)
@@ -764,63 +1019,208 @@ def handle_ts480_command(cmd, ser):
         return None  # Don't send error responses
 
 def show_audio_devices():
-    for i in range(pyaudio.PyAudio().get_device_count()):
-        print(pyaudio.PyAudio().get_device_info_by_index(i))
-    for i in range(pyaudio.PyAudio().get_host_api_count()):
-        print(pyaudio.PyAudio().get_host_api_info_by_index(i))
+    # Use shared PyAudio instance or create temporary one
+    p = state.get('pyaudio_instance')
+    temp_instance = False
+    if not p:
+        p = pyaudio.PyAudio()
+        temp_instance = True
+    
+    try:
+        for i in range(p.get_device_count()):
+            print(p.get_device_info_by_index(i))
+        for i in range(p.get_host_api_count()):
+            print(p.get_host_api_info_by_index(i))
+    finally:
+        if temp_instance:
+            p.terminate()
         
 def find_audio_device(name, occurance = 0):
+    """Find audio device by name or ALSA PCM descriptor.
+    
+    This function searches PyAudio's device list for:
+    - Exact matches of the provided name
+    - ALSA PCM names like 'trusdx_tx', 'trusdx_rx'
+    - ALSA hardware descriptors like 'hw:Loopback,0,0'
+    - Devices containing 'Loopback' in their description
+    
+    Args:
+        name: Device name to search for (e.g., 'trusdx_tx', 'hw:Loopback,0,0')
+        occurance: Which matching device to return if multiple found (default: 0 = first)
+    
+    Returns:
+        int: Device index or -1 if not found
+    """
+    log(f"[ALSA-AUDIT] Searching for audio device: '{name}'")
+    
+    # Special case for TRUSDX devices - map to correct Loopback hw devices
+    # Support both naming conventions (Option #1 preferred, Option #2 legacy)
+    if name in ["TRUSDX", "TRUSDX_monitor", "trusdx_tx", "trusdx_rx"]:
+        try:
+            p = state.get('pyaudio_instance')
+            temp_instance = False
+            if not p:
+                p = pyaudio.PyAudio()
+                temp_instance = True
+            
+            # Map device names to Loopback hw device patterns
+            # Driver perspective:
+            # TRUSDX / trusdx_tx: Driver reads TX audio from hw:1,0 (JS8Call writes to hw:1,0)
+            # TRUSDX.monitor / trusdx_rx: Driver writes RX audio to hw:1,1 (JS8Call reads from hw:1,1)
+            device_map = {
+                "TRUSDX": "1,0",           # Option #1 (preferred) - TX audio input
+                "TRUSDX_monitor": "1,1",   # Option #1 (preferred) - RX audio output
+                "trusdx_tx": "1,0",        # Option #2 (legacy) - TX audio input
+                "trusdx_rx": "1,1"         # Option #2 (legacy) - RX audio output
+            }
+            
+            hw_pattern = device_map[name]
+            
+            for i in range(p.get_device_count()):
+                device_info = p.get_device_info_by_index(i)
+                device_name = device_info['name']
+                # Check if this is the correct Loopback device
+                # PyAudio shows these as "Loopback: PCM (hw:0,0)" and "Loopback: PCM (hw:0,1)"
+                if "Loopback" in device_name and hw_pattern in device_name:
+                    log(f"[ALSA-AUDIT] Found {name} -> {device_name} (index {i})")
+                    print(f"\033[1;32m[AUDIO] Mapped {name} to {device_name} (index: {i})\033[0m")
+                    if temp_instance:
+                        p.terminate()
+                    return i
+                    
+            # If not found, log available Loopback devices for debugging
+            log(f"[ALSA-AUDIT] Could not find {name} with pattern {hw_pattern}")
+            log(f"[ALSA-AUDIT] Available Loopback devices:")
+            for i in range(p.get_device_count()):
+                device_info = p.get_device_info_by_index(i)
+                if "Loopback" in device_info['name']:
+                    log(f"[ALSA-AUDIT]   {i}: {device_info['name']}")
+                    
+            if temp_instance:
+                p.terminate()
+        except Exception as e:
+            log(f"Error in special trusdx device lookup: {e}")
+    
     try:
-        p = pyaudio.PyAudio()
+        # Use shared PyAudio instance or create temporary one
+        p = state.get('pyaudio_instance')
+        temp_instance = False
+        if not p:
+            p = pyaudio.PyAudio()
+            temp_instance = True
+        
         result = []
-        trusdx_devices = []  # Specifically track TRUSDX devices
+        loopback_devices = []  # Track ALSA loopback devices
         
         for i in range(p.get_device_count()):
             device_info = p.get_device_info_by_index(i)
             device_name = device_info['name']
             
-            # Special handling for TRUSDX devices
-            if 'TRUSDX' in device_name:
-                if device_info['maxInputChannels'] > 0 and '.monitor' in device_name:
-                    trusdx_devices.append((i, device_name, 'input'))
-                    if config.get('verbose', False):
-                        print(f"\033[1;36m[AUDIO] Found TRUSDX.monitor (input) - index: {i}, channels: {device_info['maxInputChannels']}\033[0m")
-                elif device_info['maxOutputChannels'] > 0:
-                    trusdx_devices.append((i, device_name, 'output'))
-                    if config.get('verbose', False):
-                        print(f"\033[1;36m[AUDIO] Found TRUSDX (output) - index: {i}, channels: {device_info['maxOutputChannels']}\033[0m")
+            # Debug logging in verbose mode
+            if config.get('verbose', False):
+                print(f"\033[1;90m[AUDIO] Device {i}: {device_name} (in:{device_info['maxInputChannels']}, out:{device_info['maxOutputChannels']})\033[0m")
             
+            # Check for exact match first
+            if name == device_name:
+                result.append(i)
+                # Extract ALSA hw details if present
+                alsa_info = ""
+                if 'hw:' in device_name:
+                    alsa_info = f" - ALSA descriptor: {device_name}"
+                log(f"[ALSA-AUDIT] Found exact audio device match: {device_name} (index {i}){alsa_info}")
+                if config.get('verbose', False):
+                    print(f"\033[1;32m[AUDIO] Exact match found: {device_name} (index: {i})\033[0m")
+                continue
+            
+            # Check if this is an ALSA hw: style descriptor match
+            if name.startswith('hw:') and name in device_name:
+                result.append(i)
+                log(f"[ALSA-AUDIT] Found ALSA hw device: {device_name} (index {i}) - Requested: {name}")
+                if config.get('verbose', False):
+                    print(f"\033[1;32m[AUDIO] ALSA hw match: {device_name} (index: {i})\033[0m")
+                continue
+            
+            # Check for ALSA PCM name matches (trusdx_tx, trusdx_rx)
+            if 'trusdx_tx' in name.lower() or 'trusdx_rx' in name.lower():
+                # Look for these specific PCM names in the device description
+                if name.lower() in device_name.lower():
+                    result.append(i)
+                    # Parse ALSA card,device,subdevice from device name if present
+                    alsa_details = ""
+                    if 'hw:' in device_name:
+                        alsa_details = f" - ALSA: {device_name}"
+                    log(f"[ALSA-AUDIT] Found ALSA PCM device: {device_name} (index {i}) for '{name}'{alsa_details}")
+                    if config.get('verbose', False):
+                        print(f"\033[1;32m[AUDIO] ALSA PCM match: {device_name} (index: {i})\033[0m")
+                    continue
+            
+            # Check for Loopback devices (fallback if custom names not found)
+            if 'Loopback' in device_name or 'loopback' in device_name.lower():
+                # Determine if it's input or output based on channels
+                if device_info['maxInputChannels'] > 0:
+                    loopback_devices.append((i, device_name, 'input'))
+                    if config.get('verbose', False):
+                        print(f"\033[1;36m[AUDIO] Found Loopback input device: {device_name} (index: {i})\033[0m")
+                if device_info['maxOutputChannels'] > 0:
+                    loopback_devices.append((i, device_name, 'output'))
+                    if config.get('verbose', False):
+                        print(f"\033[1;36m[AUDIO] Found Loopback output device: {device_name} (index: {i})\033[0m")
+            
+            # General substring match (case-insensitive)
             if name.lower() in device_name.lower():
                 result.append(i)
-                log(f"Found audio device: {device_name} (index {i})")
-                if config.get('verbose', False):
-                    print(f"\033[1;90m[AUDIO] Device {i}: {device_name} (in:{device_info['maxInputChannels']}, out:{device_info['maxOutputChannels']})\033[0m")
+                log(f"Found audio device (substring): {device_name} (index {i})")
         
-        p.terminate()
+        if temp_instance:
+            p.terminate()
         
-        # If looking for TRUSDX, use the specifically found devices
-        if 'TRUSDX' in name:
-            if name == 'TRUSDX.monitor':
-                # Find input device (monitor)
-                for idx, dev_name, dev_type in trusdx_devices:
-                    if dev_type == 'input' and '.monitor' in dev_name:
-                        log(f"Using TRUSDX.monitor device index {idx}")
-                        print(f"\033[1;32m[AUDIO] Selected TRUSDX.monitor (index: {idx})\033[0m")
-                        return idx
-            else:
-                # Find output device (sink)
-                for idx, dev_name, dev_type in trusdx_devices:
-                    if dev_type == 'output' and '.monitor' not in dev_name:
-                        log(f"Using TRUSDX sink device index {idx}")
-                        print(f"\033[1;32m[AUDIO] Selected TRUSDX sink (index: {idx})\033[0m")
-                        return idx
-        
+        # If we found exact/substring matches, use them
         if len(result) > occurance:
-            log(f"Using audio device index {result[occurance]} for '{name}'")
-            return result[occurance]
-        else:
-            log(f"Audio device '{name}' not found, using default (-1)")
-            return -1
+            selected_idx = result[occurance]
+            # Get more details about the selected device
+            if not temp_instance:
+                p = state.get('pyaudio_instance')
+            device_info = p.get_device_info_by_index(selected_idx)
+            device_name = device_info['name']
+            
+            # Parse ALSA info if present
+            alsa_mapping = ""
+            if 'hw:' in device_name:
+                # Extract card, device, subdevice from names like "hw:Loopback,0,0"
+                import re
+                match = re.search(r'hw:(\w+),(\d+),(\d+)', device_name)
+                if match:
+                    card_name, device_num, subdev_num = match.groups()
+                    alsa_mapping = f" -> ALSA hw:{card_name},{device_num},{subdev_num}"
+                else:
+                    # Try simpler pattern for "hw:Loopback,0" format
+                    match = re.search(r'hw:(\w+),(\d+)', device_name)
+                    if match:
+                        card_name, device_num = match.groups()
+                        alsa_mapping = f" -> ALSA hw:{card_name},{device_num}"
+            elif 'trusdx_tx' in name.lower():
+                # This is using the ALSA PCM alias which maps to hw:Loopback,0,0
+                alsa_mapping = " -> ALSA PCM 'trusdx_tx' (mapped to hw:Loopback,0,subdevice)"
+            elif 'trusdx_rx' in name.lower():
+                # This is using the ALSA PCM alias which maps to hw:Loopback,1,0  
+                alsa_mapping = " -> ALSA PCM 'trusdx_rx' (mapped to hw:Loopback,1,subdevice)"
+            
+            log(f"[ALSA-AUDIT] SELECTED: Using audio device index {selected_idx} for '{name}' - Device: '{device_name}'{alsa_mapping}")
+            return selected_idx
+        
+        # NO FALLBACK - only use exact device names specified
+        # This prevents accidentally grabbing .1 sub-devices or wrong Loopback devices
+        if not result:
+            log(f"[ALSA-AUDIT] STRICT MODE: Device '{name}' not found - NO FALLBACK to generic Loopback devices")
+            if config.get('verbose', False):
+                print(f"\033[1;33m[AUDIO] Device '{name}' not found - strict mode, no fallback\033[0m")
+        
+        # No device found
+        log(f"Audio device '{name}' not found, using default (-1)")
+        if config.get('verbose', False):
+            print(f"\033[1;31m[AUDIO] Device '{name}' not found, will use default\033[0m")
+        return -1
+        
     except Exception as e:
         log(f"Error finding audio device '{name}': {e}")
         return -1
@@ -976,8 +1376,20 @@ def disable_cat_audio(ser):
 def enable_cat_audio(ser):
     """Send UA1; to truSDX to enable CAT-audio ahead of TX"""
     try:
-        send_cat(b'UA1;', ser, post_delay=0.030)  # use centralized CAT sender with 30ms delay
+        # First ensure we're in USB mode (MD2)
+        send_cat(b'MD2;', ser, post_delay=0.050)  # Set USB mode first
+        log('Sent MD2; (USB mode)', 'INFO')
+        
+        # Then enable CAT audio with longer delay
+        send_cat(b'UA1;', ser, post_delay=0.100)  # Increased delay from 30ms to 100ms
         log('Sent UA1; (enable CAT-audio)', 'INFO')
+        
+        # Additional settling time for truSDX hardware
+        time.sleep(0.050)  # Extra 50ms for hardware to stabilize
+        
+        # Set output power to maximum (100W) - truSDX might need this
+        send_cat(b'PC100;', ser, post_delay=0.050)  # Set power to 100W
+        log('Sent PC100; (set power to 100W)', 'INFO')
     except Exception as e:
         log(f'UA1 send failed: {e}', 'ERROR')
 
@@ -989,15 +1401,15 @@ def handle_vox(samples8, ser):
                 enable_cat_audio(ser)
                 state['cat_audio_enabled'] = True
             status[0] = True  # Set TX state BEFORE entering TX mode
-            log("UA1 → TX1", level='RECONNECT')
-            send_cat(b";TX1;", ser)  # TX1 = enter TX mode
+            log("UA1 → TX0", level='RECONNECT')
+            send_cat(b";TX0;", ser)  # TX0 = enter TX mode for truSDX
     elif status[0]:  # in TX and no audio detected (silence)
-        tx_cat_delay(ser)  # Call delay BEFORE TX0 command
-        log("TX1 → audio-stream → TX0", level='RECONNECT')
-        send_cat(b";TX0;", ser)  # TX0 = exit TX mode
+        tx_cat_delay(ser)  # Call delay BEFORE RX command
+        log("TX0 → audio-stream → RX", level='RECONNECT')
+        send_cat(b";RX;", ser)  # RX = exit TX mode for truSDX
         log("TX sequence end – disabling CAT-audio", level='RECONNECT')
         disable_cat_audio(ser)  # Send UA0 after exiting TX
-        log("TX0 → UA0", level='RECONNECT')
+        log("RX → UA0", level='RECONNECT')
         status[0] = False  # Clear TX state after exiting
 
 def handle_rts_dtr(ser, cat):
@@ -1082,6 +1494,32 @@ def handle_cat(pastream, ser, cat):
                     time.sleep(0.005)  # Increased delay for better synchronization
                     continue
                 
+                # Handle TX1 command - must send UA1 BEFORE forwarding TX1
+                if d.startswith(b"TX1"):
+                    # Need to unmute speaker before TX1
+                    if not state.get('cat_audio_enabled', False):
+                        print("\033[1;33m[TX] Enabling CAT audio (UA1) before TX1...\033[0m")
+                        enable_cat_audio(ser)
+                        state['cat_audio_enabled'] = True
+                        
+                        # Wait for hardware to process UA1 before sending TX1
+                        time.sleep(0.2)  # Increased from 0.1 to 0.2
+                        print("\033[1;36m[TX] CAT audio enabled, proceeding with TX1...\033[0m")
+                        
+                        # Query power to check if hardware is ready
+                        power_response = query_radio('PC', retries=1, timeout=0.5, ser_handle=ser)
+                        if power_response:
+                            power_str = power_response.decode('utf-8').strip(';')
+                            print(f"\033[1;36m[TX DEBUG] Power query before TX1: {power_str}\033[0m")
+                        else:
+                            print(f"\033[1;33m[TX DEBUG] No power response before TX1\033[0m")
+                    
+                    status[0] = True  # Set TX state BEFORE sending TX command
+                    print("\033[1;31m[TX] Transmit mode\033[0m")
+                    pastream.stop_stream()
+                    pastream.start_stream()
+                    time.sleep(0.1)  # Ensure stream is stable before reading
+                
                 # Forward to radio if not handled locally
                 if status[0]:
                     tx_cat_delay(ser)
@@ -1111,18 +1549,7 @@ def handle_cat(pastream, ser, cat):
                         else:
                             print(f"\033[1;33m[FREQ] No valid response from radio\033[0m")
                 
-                if d.startswith(b"TX1"):
-                    # Need to unmute speaker before TX1
-                    if not state.get('cat_audio_enabled', False):
-                        print("\033[1;33m[TX] Enabling CAT audio (UA1) before TX1...\033[0m")
-                        enable_cat_audio(ser)
-                        state['cat_audio_enabled'] = True
-                    status[0] = True  # Set TX state BEFORE sending TX command
-                    print("\033[1;31m[TX] Transmit mode\033[0m")
-                    pastream.stop_stream()
-                    pastream.start_stream()
-                    time.sleep(0.1)  # Ensure stream is stable before reading
-                elif d.startswith(b"TX0") or d.startswith(b"RX"):
+                if d.startswith(b"TX0") or d.startswith(b"RX"):
                     # TX0 or RX command - exit TX mode
                     # Note: tx_cat_delay was already called above if status[0] was True
                     # So we don't need to call it again here
@@ -1346,16 +1773,25 @@ def safe_reconnect():
         state['reconnecting'] = True
         state['reconnect_count'] += 1
         
-        if state['reconnect_count'] > MAX_RECONNECT_ATTEMPTS:
-            print(f"\033[1;31m[RECONNECT] ❌ Max retries ({MAX_RECONNECT_ATTEMPTS}) exceeded. Setting hardware disconnected flag.\033[0m")
-            log(f"FATAL: Maximum retry limit ({MAX_RECONNECT_ATTEMPTS}) exceeded. Unable to maintain stable connection.", "ERROR")
-            state['reconnecting'] = False
-            state['hardware_disconnected'] = True  # Set flag for main loop to exit and restart
-            status[2] = False  # Stop all threads
-            return
+        # Only limit reconnections if MAX_RECONNECT_ATTEMPTS > 0
+        if MAX_RECONNECT_ATTEMPTS > 0:
+            if state['reconnect_count'] > MAX_RECONNECT_ATTEMPTS:
+                print(f"\033[1;33m[RECONNECT] ⚠️ Max retries ({MAX_RECONNECT_ATTEMPTS}) exceeded. Waiting 10s before resetting counter...\033[0m")
+                log(f"Max reconnect attempts reached, waiting before retry", "WARNING")
+                time.sleep(10)
+                state['reconnect_count'] = 0  # Reset counter and try again
+                print(f"\033[1;33m[RECONNECT] 🔄 Resetting counter and continuing reconnection attempts...\033[0m")
+        else:
+            # Infinite reconnection mode
+            if state['reconnect_count'] % 10 == 0 and state['reconnect_count'] > 0:
+                print(f"\033[1;36m[RECONNECT] ℹ️ Reconnection attempt #{state['reconnect_count']} (infinite mode)\033[0m")
         
         log(f"Connection issue detected - attempting reconnection #{state['reconnect_count']}")
-        print(f"\033[1;33m[RECONNECT] 🔄 Reconnection attempt #{state['reconnect_count']}/{MAX_RECONNECT_ATTEMPTS}...\033[0m")
+        
+        if MAX_RECONNECT_ATTEMPTS > 0:
+            print(f"\033[1;33m[RECONNECT] 🔄 Reconnection attempt #{state['reconnect_count']}/{MAX_RECONNECT_ATTEMPTS}...\033[0m")
+        else:
+            print(f"\033[1;33m[RECONNECT] 🔄 Reconnection attempt #{state['reconnect_count']} (infinite mode)...\033[0m")
 
         # Preserve radio state (frequency, mode) and TX status
         preserved_freq = radio_state['vfo_a_freq']
@@ -1416,46 +1852,58 @@ def safe_reconnect():
             else:
                 new_ser2 = new_ser  # Use the same port if no loopback
             
-            # Set up audio streams
-            new_in_stream = pyaudio.PyAudio().open(
-                frames_per_buffer=config['block_size'], 
-                format=pyaudio.paInt16, 
-                channels=1, 
-                rate=audio_tx_rate, 
-                input=True, 
-                input_device_index=find_audio_device(platform_config['virtual_audio_dev_out']) if platform_config['virtual_audio_dev_out'] else -1
-            )
+            # Use the open_audio_streams function with retry logic during reconnection
+            log(f"[RECONNECT] Attempting to reopen audio streams...")
+            new_in_stream, new_out_stream = open_audio_streams(platform_config, config, state, retry_on_busy=True)
             
-            new_out_stream = pyaudio.PyAudio().open(
-                frames_per_buffer=0, 
-                format=pyaudio.paUInt8, 
-                channels=1, 
-                rate=audio_rx_rate, 
-                output=True, 
-                output_device_index=find_audio_device(platform_config['virtual_audio_dev_in']) if platform_config['virtual_audio_dev_in'] else -1
-            )
+            if not new_in_stream and not new_out_stream:
+                log(f"[RECONNECT] No audio streams could be reopened, continuing without audio", "WARNING")
+                print(f"\033[1;33m[RECONNECT] ⚠️ No audio streams available - continuing in CAT-only mode\033[0m")
+            elif not new_in_stream:
+                log(f"[RECONNECT] TX audio stream unavailable, continuing with RX only", "WARNING")
+                print(f"\033[1;33m[RECONNECT] ⚠️ TX audio unavailable - continuing in RX-only mode\033[0m")
+            elif not new_out_stream:
+                log(f"[RECONNECT] RX audio stream unavailable, continuing with TX only", "WARNING")
+                print(f"\033[1;33m[RECONNECT] ⚠️ RX audio unavailable - continuing in TX-only mode\033[0m")
+            else:
+                log(f"[RECONNECT] Both audio streams reopened successfully")
+                print(f"\033[1;32m[RECONNECT] ✅ Audio streams restored\033[0m")
             
-            # Atomically replace handles
+            # Atomically replace handles (only if successfully opened)
             state['ser'] = new_ser
             state['ser2'] = new_ser2
-            state['in_stream'] = new_in_stream
-            state['out_stream'] = new_out_stream
+            if new_in_stream:
+                state['in_stream'] = new_in_stream
+            if new_out_stream:
+                state['out_stream'] = new_out_stream
             
             # Reset CAT buffer in handle_cat
             if hasattr(handle_cat, 'buffer'):
                 handle_cat.buffer = b''
                 log("CAT buffer reset after reconnection")
             
-            # Initialize radio with proper commands
-            init_cmd = b";MD2;UA2;" if not config['unmute'] else b";MD2;UA1;"
-            new_ser.write(init_cmd)
+            # Initialize radio with proper commands - send separately with delays
+            new_ser.write(b";MD2;")  # Set USB mode first
+            new_ser.flush()
+            time.sleep(0.2)  # Give hardware time to process mode change
+            
+            # Then set audio mute state
+            audio_cmd = b";UA2;" if not config['unmute'] else b";UA1;"
+            new_ser.write(audio_cmd)
             new_ser.flush()
             time.sleep(0.3)
             
-            # Initialize radio
+            # Initialize radio - send commands separately with delays
             time.sleep(2)  # Wait for device to stabilize
-            init_cmd = b";MD2;UA2;" if not config['unmute'] else b";MD2;UA1;"
-            new_ser.write(init_cmd)
+            
+            # Set USB mode first
+            new_ser.write(b";MD2;")
+            new_ser.flush()
+            time.sleep(0.3)  # Wait for mode change to process
+            
+            # Then set audio mute state
+            audio_cmd = b";UA2;" if not config['unmute'] else b";UA1;"
+            new_ser.write(audio_cmd)
             new_ser.flush()
             time.sleep(0.5)
             
@@ -1544,8 +1992,11 @@ def get_platform_config():
     """Get platform-specific configuration"""
     if platform == "linux" or platform == "linux2":
         return {
-            'virtual_audio_dev_out': "TRUSDX",         # Sink for output
-            'virtual_audio_dev_in': "TRUSDX.monitor",  # Monitor for input
+            # IMPORTANT: These are from the driver's perspective:
+            # - virtual_audio_dev_out: Audio OUTPUT from driver to WSJT-X (RX audio)
+            # - virtual_audio_dev_in: Audio INPUT to driver from WSJT-X (TX audio)
+            'virtual_audio_dev_out': "TRUSDX_monitor",  # RX audio output to WSJT-X (Option #1 - preferred)
+            'virtual_audio_dev_in': "TRUSDX",           # TX audio input from WSJT-X (Option #1 - preferred)
             'trusdx_serial_dev': "USB Serial",
             'loopback_serial_dev': "",
             'cat_serial_dev': "",
@@ -1571,8 +2022,15 @@ def get_platform_config():
 def pty_echo(fd1, fd2):
     try:
         log("pty_echo")
+        initial_wait = True
         while status[2]:
             try:
+                # Give the system time to establish connections on startup
+                if initial_wait:
+                    time.sleep(1.0)  # Wait 1 second before starting to prevent immediate disconnection
+                    initial_wait = False
+                    log("PTY echo thread ready")
+                    
                 c1 = fd1.read(1)
                 if not c1:  # EOF or device disconnected
                     time.sleep(0.001)
@@ -1583,9 +2041,14 @@ def pty_echo(fd1, fd2):
                 #print(f'{datetime.datetime.utcnow()} {threading.current_thread().ident} > ', c1)
             except (OSError, IOError) as e:
                 if e.errno in [5, 9]:  # Errno 5: I/O error, Errno 9: Bad file descriptor
-                    log(f"PTY device disconnected: {e}")
-                    print(f"\033[1;33m[PTY] 🔌 Virtual device disconnected\033[0m")
-                    break  # Exit gracefully
+                    # Don't exit immediately - this might be a temporary condition
+                    if initial_wait:
+                        # Still in initial phase, just wait
+                        time.sleep(0.1)
+                        continue
+                    log(f"PTY I/O error (may be temporary): {e}")
+                    time.sleep(0.5)  # Wait before retrying
+                    continue  # Don't break, keep trying
                 elif e.errno == 25:  # Errno 25: Inappropriate ioctl for device (RTS/DTR related)
                     # Hamlib's ioctl will still fail in the C layer, so we trap the IOError
                     # in the PTY echo thread and just ignore it - keeps stderr clean without touching JS8Call
@@ -1593,7 +2056,7 @@ def pty_echo(fd1, fd2):
                     time.sleep(0.001)
                     continue
                 else:
-                    log(f"PTY I/O error: {e}")
+                    log(f"PTY I/O error (errno {e.errno}): {e}")
                     time.sleep(0.1)
                     continue
             except Exception as e:
@@ -1625,9 +2088,12 @@ def run():
         create_persistent_serial_ports()
 
         if platform == "linux" or platform == "linux2":
-           # Use TRUSDX null-sink devices for audio
-           virtual_audio_dev_out = "TRUSDX"         # Audio from WSJT-X/JS8Call to truSDX (sink)
-           virtual_audio_dev_in  = "TRUSDX.monitor" # Audio from truSDX to WSJT-X/JS8Call (monitor)
+           # Use ALSA loopback devices for audio (Option #1 - PREFERRED)
+           # IMPORTANT: These are from the perspective of WSJT-X/JS8Call:
+           # - TRUSDX.monitor receives audio FROM the radio (RX audio for WSJT-X to decode)
+           # - TRUSDX sends audio TO the radio (TX audio from WSJT-X)
+           virtual_audio_dev_out = "TRUSDX_monitor"  # RX audio FROM radio (goes OUT to WSJT-X)
+           virtual_audio_dev_in  = "TRUSDX"          # TX audio TO radio (comes IN from WSJT-X)
            trusdx_serial_dev     = "USB Serial"
            loopback_serial_dev   = ""
            cat_serial_dev        = ""
@@ -1724,31 +2190,58 @@ def run():
                 print(f"\033[1;31m[ERROR] /dev/pts/x device not found: {e}\033[0m")
         
         try:
-           # Setup audio streams with proper device indices
-           in_device_idx = find_audio_device(virtual_audio_dev_out) if virtual_audio_dev_out else -1
-           out_device_idx = find_audio_device(virtual_audio_dev_in) if virtual_audio_dev_in else -1
+           # Use the new open_audio_streams function with retry logic
+           platform_config = {
+               'virtual_audio_dev_out': virtual_audio_dev_out,
+               'virtual_audio_dev_in': virtual_audio_dev_in
+           }
            
-           if config.get('verbose', False):
-               print(f"\033[1;36m[AUDIO] Opening streams - Input device: {virtual_audio_dev_out} (index: {in_device_idx}), Output device: {virtual_audio_dev_in} (index: {out_device_idx})\033[0m")
+           # Open audio streams with retry logic for device-busy errors
+           in_stream, out_stream = open_audio_streams(platform_config, config, state, retry_on_busy=True)
            
-           # in_stream receives audio from WSJT-X/JS8Call via TRUSDX sink
-           in_stream = pyaudio.PyAudio().open(frames_per_buffer=config['block_size'], format = pyaudio.paInt16, channels = 1, rate = audio_tx_rate, input = True, input_device_index = in_device_idx)
-           # out_stream sends audio to WSJT-X/JS8Call via TRUSDX.monitor
-           out_stream = pyaudio.PyAudio().open(frames_per_buffer=0, format = pyaudio.paUInt8, channels = 1, rate = audio_rx_rate, output = True, output_device_index = out_device_idx)
-           
-           print(f"\033[1;32m[AUDIO] ✅ Audio streams opened successfully\033[0m")
+           # Check if we got at least one stream
+           if not in_stream and not out_stream:
+               print(f"\033[1;31m[AUDIO] ❌ Failed to open any audio streams\033[0m")
+               if platform == "win32":
+                   print("VB-Audio CABLE not found: reinstall or enable")
+               else:
+                   print("\033[1;33m[AUDIO] ALSA loopback devices not found\033[0m")
+                   print("\033[1;33m[AUDIO] Run setup.sh to configure ALSA loopback devices (trusdx_tx, trusdx_rx)\033[0m")
+               # Don't raise an error - continue running in CAT-only mode
+           elif not in_stream:
+               print(f"\033[1;33m[AUDIO] ⚠️ TX audio unavailable - continuing in RX-only mode\033[0m")
+           elif not out_stream:
+               print(f"\033[1;33m[AUDIO] ⚠️ RX audio unavailable - continuing in TX-only mode\033[0m")
         except Exception as e:
             if platform == "win32": print("VB-Audio CABLE not found: reinstall or enable")
             else:
-                print("\033[1;31m[AUDIO] ❌ Audio device error: {e}\033[0m")
-                print("\033[1;33m[AUDIO] The TRUSDX sink will be auto-created if missing\033[0m")
-                print("\033[1;33m[AUDIO] Manual command: pactl load-module module-null-sink sink_name=TRUSDX sink_properties=device.description=\"TRUSDX\"\033[0m")
+                print(f"\033[1;31m[AUDIO] ❌ Audio device error: {e}\033[0m")
+                print("\033[1;33m[AUDIO] ALSA loopback devices not found\033[0m")
+                print("\033[1;33m[AUDIO] Run setup.sh to configure ALSA loopback devices (trusdx_tx, trusdx_rx)\033[0m")
             raise
  
         try:
-            ser = serial.Serial(find_serial_device(trusdx_serial_dev), 115200, write_timeout = 0)
+            # Try to find the truSDX device
+            trusdx_port = find_serial_device(trusdx_serial_dev)
+            if not trusdx_port:
+                # Fallback: try common USB serial ports
+                for fallback_port in ['/dev/ttyUSB0', '/dev/ttyUSB1', '/dev/ttyACM0', '/dev/ttyACM1']:
+                    if os.path.exists(fallback_port):
+                        print(f"\033[1;33m[SERIAL] Using fallback port: {fallback_port}\033[0m")
+                        trusdx_port = fallback_port
+                        break
+                
+                if not trusdx_port:
+                    raise Exception("No USB serial device found. Is the truSDX connected?")
+            else:
+                print(f"\033[1;32m[SERIAL] Found truSDX on: {trusdx_port}\033[0m")
+            
+            ser = serial.Serial(trusdx_port, 115200, write_timeout = 0)
+            print(f"\033[1;32m[SERIAL] ✅ Connected to truSDX on {trusdx_port}\033[0m")
         except Exception as e:
-            print("truSDX device not found")
+            print(f"\033[1;31m[ERROR] truSDX device not found: {e}\033[0m")
+            print(f"\033[1;33m[HINT] Make sure the truSDX is connected via USB\033[0m")
+            print(f"\033[1;33m[HINT] You may need to be in the 'dialout' group: sudo usermod -a -G dialout $USER\033[0m")
             raise
             
         #ser.dtr = True
@@ -1760,10 +2253,28 @@ def run():
         try:
             # Send basic initialization commands (like working 1.1.6)
             # UA2 = muted speaker, UA1 = unmuted speaker
-            init_cmd = b";MD2;UA2;" if not config['unmute'] else b";MD2;UA1;"
-            ser.write(init_cmd)  # enable audio streaming, set USB mode, mute speaker
+            # Send commands separately with delays for better hardware compatibility
+            ser.write(b";MD2;")  # Set USB mode first
             ser.flush()
-            time.sleep(0.5)  # Give radio time to process
+            time.sleep(0.3)  # Give hardware time to process mode change
+
+            # Retry setting audio mute/unmute state
+            retries = 3
+            for attempt in range(retries):
+                audio_cmd = b";UA2;" if not config['unmute'] else b";UA1;"
+                ser.write(audio_cmd)
+                ser.flush()
+                time.sleep(0.5)  # Give radio time to process
+
+                # Capture response for logging
+                response = ser.read(ser.in_waiting)
+                log(f"Attempt {attempt + 1}/{retries}: Sent {audio_cmd.decode()} - received: {response}")
+                
+                # Assuming success response end with ';'
+                if response.endswith(b';'):
+                    break
+                else:
+                    time.sleep(0.2)  # Additional delay before retry
             
             # Ensure speaker is muted by sending explicit mute command
             if not config['unmute']:
@@ -1913,12 +2424,10 @@ def run():
         print(f"\033[1;37m[INFO] Available devices:\033[0m [{virtual_audio_dev_in}, {virtual_audio_dev_out}, {cat_serial_dev}]")
         print(f"\033[1;37m[INFO] Persistent CAT port:\033[0m {alt_cat_serial_dev}")
         
-        # Check and setup audio
-        audio_status = check_audio_setup()
-        if audio_status:
-            print(f"\033[1;32m[AUDIO] TRUSDX audio device ready\033[0m")
-        else:
-            print(f"\033[1;33m[AUDIO] TRUSDX audio device needs setup - see instructions\033[0m")
+        # Audio devices are now using ALSA loopback (no PulseAudio setup needed)
+        print(f"\033[1;32m[AUDIO] Using ALSA loopback devices (Option #1):\033[0m")
+        print(f"\033[1;36m  • {virtual_audio_dev_in} → TX audio from WSJT-X to radio\033[0m")
+        print(f"\033[1;36m  • {virtual_audio_dev_out} → RX audio from radio to WSJT-X\033[0m")
         
         print(f"\033[1;36m[READY] Waiting for connections from WSJT-X/JS8Call...\033[0m")
         print()
@@ -1930,20 +2439,30 @@ def run():
         # Add debug tracking for main loop
         loop_count = 0
         header_refresh_count = 0
+        shutdown_requested = False
+        
         while status[2]:    # wait and idle
             loop_count += 1
-            print(f"\033[1;36m[DEBUG] Main loop iteration {loop_count}, status[2]={status[2]}\033[0m")
+            
+            # Only print debug messages in verbose mode
+            if config.get('verbose', False) and loop_count % 60 == 0:
+                print(f"\033[1;36m[DEBUG] Main loop iteration {loop_count}, running normally\033[0m")
             
             # Check if hardware disconnection was detected
             if state.get('hardware_disconnected', False):
-                log("Hardware disconnection detected in main loop - exiting to restart")
-                print(f"\033[1;33m[MAIN] Hardware disconnection detected - triggering restart...\033[0m")
-                status[2] = False  # Stop all threads
-                break
+                # Don't exit, just trigger reconnection
+                if not state.get('reconnecting', False):
+                    log("Hardware disconnection detected in main loop - triggering reconnection")
+                    print(f"\033[1;33m[MAIN] Hardware disconnection detected - attempting reconnection...\033[0m")
+                    threading.Thread(target=safe_reconnect, daemon=True).start()
+                    state['hardware_disconnected'] = False  # Clear flag
+                time.sleep(1)
+                continue
             
             # Check thread status
-            thread_count = threading.active_count()
-            print(f"\033[1;36m[DEBUG] Active threads: {thread_count}\033[0m")
+            if config.get('verbose', False) and loop_count % 120 == 0:
+                thread_count = threading.active_count()
+                print(f"\033[1;36m[DEBUG] Active threads: {thread_count}\033[0m")
             
             # Refresh header every 30 seconds (30 iterations since we sleep 1 second)
             header_refresh_count += 1
@@ -1951,18 +2470,30 @@ def run():
                 header_refresh_count = 0
                 if not config.get('no_header', False):
                     refresh_header_only()
-                    print(f"\033[1;36m[HEADER] Periodic header refresh\033[0m")
             
             # display some stats every 1 seconds
             #log(f"{int(time.time()-ts)} buf: {len(buf)}")
             time.sleep(1)
+            
+            # Check for keyboard interrupt or shutdown request
+            if shutdown_requested:
+                print("\033[1;33m[MAIN] Shutdown requested, cleaning up...\033[0m")
+                status[2] = False
+                break
     except Exception as e:
         log(e)
         status[2] = False
     except KeyboardInterrupt:
-        print("Stopping")
+        print("\n\033[1;33m[MAIN] Keyboard interrupt - shutting down gracefully...\033[0m")
         status[2] = False
-        ser.write(b";UA0;")
+        # Ensure speaker is muted before exit
+        if ser:
+            try:
+                ser.write(b";UA2;")  # Mute speaker
+                ser.flush()
+            except:
+                pass
+        shutdown_requested = True
 
     try:
         # clean-up
@@ -1978,9 +2509,13 @@ def run():
            log("fd closed")
         ser2.close()
         ser.close()
-        #in_stream.close()
-        #out_stream.close()
-        pyaudio.PyAudio().terminate()
+        if in_stream:
+            in_stream.stop_stream()
+            in_stream.close()
+        if out_stream:
+            out_stream.stop_stream()
+            out_stream.close()
+        # Note: PyAudio instance will be terminated by atexit handler
         log("Closed")
     except Exception as e:
         log(e)
@@ -2020,6 +2555,12 @@ def check_js8call_ini():
                 continue
 
 def main():
+    # Python version check
+    if sys.version_info < MIN_PYTHON_VERSION:
+        print(f"ERROR: Python {MIN_PYTHON_VERSION[0]}.{MIN_PYTHON_VERSION[1]} or higher is required.")
+        print(f"You are running Python {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")
+        sys.exit(1)
+    
     if not config.get('no_header', False):
         show_version_info()
         log("Starting truSDX-AI Driver...", "INFO")
@@ -2081,12 +2622,12 @@ if __name__ == '__main__':
     parser.add_argument("-v", "--verbose", action="store_true", default=False, help="increase verbosity")
     parser.add_argument("--vox", action="store_true", default=False, help="VOX audio-triggered PTT (Linux only)")
     parser.add_argument("--unmute", action="store_true", default=False, help="Enable (tr)usdx audio")
-    parser.add_argument("--direct", action="store_true", default=False, help="Use system audio devices (no loopback)")
+    parser.add_argument("--direct", action="store_true", default=False, help="Use system audio devices directly (bypasses ALSA Loopback card 0)")
     parser.add_argument("--no-rtsdtr", action="store_true", default=False, help="Disable RTS/DTR-triggered PTT")
     parser.add_argument("-B", "--block-size", type=int, default=512, help="RX Block size")
     parser.add_argument("-T", "--tx-block-size", type=int, default=48, help="TX Block size")
     parser.add_argument("--no-header", action="store_true", default=False, help="Skip initial version display")
-    parser.add_argument("--no-power-monitor", action="store_true", default=True, help="Disable power monitoring feature")
+    parser.add_argument("--no-power-monitor", action="store_true", default=False, help="Disable power monitoring feature")
     parser.add_argument("--logfile", type=str, help="Override default log file location")
     args = parser.parse_args()
     config = vars(args)

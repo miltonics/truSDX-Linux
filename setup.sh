@@ -37,7 +37,7 @@ fi
 # Install OS packages
 if (
   if command -v apt-get >/dev/null 2>&1; then
-    echo -e "${c_blue}[1/5] Installing system packages...${c_reset}"
+    echo -e "${c_blue}[1/6] Installing system packages...${c_reset}"
     sudo apt-get update -y
     # Python and pip
     sudo apt-get install -y python3 python3-pip
@@ -50,24 +50,24 @@ if (
     exit 1
   fi
 ); then
-  log_step "[1/5] Installing system packages" OK
+  log_step "[1/6] Installing system packages" OK
 else
-  log_step "[1/5] Installing system packages" FAIL "$?"
+  log_step "[1/6] Installing system packages" FAIL "$?"
 fi
 
 # Install Python packages using apt (preferred for system packages)
 if (
-  echo -e "${c_blue}[2/5] Installing Python packages...${c_reset}"
+  echo -e "${c_blue}[2/6] Installing Python packages...${c_reset}"
   sudo apt-get install -y python3-serial python3-pyaudio
 ); then
-  log_step "[2/5] Installing Python packages" OK
+  log_step "[2/6] Installing Python packages" OK
 else
-  log_step "[2/5] Installing Python packages" FAIL "$?"
+  log_step "[2/6] Installing Python packages" FAIL "$?"
 fi
 
 # Add user to dialout group for serial port access
 if (
-  echo -e "${c_blue}[3/5] Adding user to dialout group...${c_reset}"
+  echo -e "${c_blue}[3/6] Adding user to dialout group...${c_reset}"
   if ! groups | grep -q dialout; then
     sudo usermod -a -G dialout $USER
     echo -e "${c_green}Added $USER to dialout group. You may need to log out and back in for this to take effect.${c_reset}"
@@ -75,21 +75,22 @@ if (
     echo -e "${c_green}User already in dialout group.${c_reset}"
   fi
 ); then
-  log_step "[3/5] Adding user to dialout group" OK
+  log_step "[3/6] Adding user to dialout group" OK
 else
-  log_step "[3/5] Adding user to dialout group" FAIL "$?"
+  log_step "[3/6] Adding user to dialout group" FAIL "$?"
 fi
 
 # Setup ALSA Loopback
 if (
-  echo -e "${c_blue}[4/5] Setting up ALSA loopback...${c_reset}"
+  echo -e "${c_blue}[4/6] Setting up ALSA loopback...${c_reset}"
   # Load snd-aloop module for ALSA loopback
   if ! lsmod | grep -q "^snd_aloop"; then
-    sudo modprobe snd-aloop
-    echo -e "${c_green}Loaded ALSA loopback module.${c_reset}"
+    sudo modprobe snd-aloop index=1 id=Loopback
+    echo -e "${c_green}Loaded ALSA loopback module with index=1.${c_reset}"
     # Make it persistent across reboots
-    echo "snd-aloop" | sudo tee -a /etc/modules >/dev/null
-    echo -e "${c_green}Added snd-aloop to auto-load on boot.${c_reset}"
+    echo "snd-aloop" | sudo tee /etc/modules-load.d/snd-aloop.conf >/dev/null
+    echo "options snd-aloop index=1 id=Loopback" | sudo tee /etc/modprobe.d/snd-aloop.conf >/dev/null
+    echo -e "${c_green}Added snd-aloop to auto-load on boot with index=1.${c_reset}"
   else
     echo -e "${c_green}ALSA loopback module already loaded.${c_reset}"
   fi
@@ -98,70 +99,233 @@ if (
   ASRC_FILE="${HOME}/.asoundrc"
   echo -e "${c_blue}Configuring ALSA PCM devices...${c_reset}"
 
-  # Check if trusdx_tx and trusdx_rx are already configured
+  # Backup existing .asoundrc if it exists
   if [[ -f "${ASRC_FILE}" ]]; then
-    if grep -q "trusdx_tx" "${ASRC_FILE}"; then
-      if grep -q "trusdx_rx" "${ASRC_FILE}"; then
-        echo -e "${c_green}ALSA PCM devices already configured.${c_reset}"
-      else
-        NEEDS_CONFIG=1
-      fi
-    else
-      NEEDS_CONFIG=1
-    fi
-  else
-    NEEDS_CONFIG=1
+    cp "${ASRC_FILE}" "${ASRC_FILE}.backup.$(date +%Y%m%d_%H%M%S)"
+    echo -e "${c_yellow}Backed up existing .asoundrc${c_reset}"
   fi
   
-  if [[ "${NEEDS_CONFIG}" == "1" ]]; then
-    # Backup existing .asoundrc if it exists
-    if [[ -f "${ASRC_FILE}" ]]; then
-      cp "${ASRC_FILE}" "${ASRC_FILE}.backup.$(date +%Y%m%d_%H%M%S)"
-      echo -e "${c_yellow}Backed up existing .asoundrc${c_reset}"
-    fi
-    
-    # Append trusdx PCM configuration
-    cat >> "${ASRC_FILE}" <<'ALSA'
+  # Create complete .asoundrc with proper hints for Qt applications
+  cat > "${ASRC_FILE}" <<'ALSA'
+# ALSA configuration for truSDX loopback audio routing
+# Created for use with snd-aloop on Linux systems
+#
+# TX: hw:1,0,0 (apps to radio) - Loopback card 1, device 0, subdevice 0
+# RX: hw:1,1,0 (radio to apps) - Loopback card 1, device 1, subdevice 0
 
-# truSDX-AI ALSA PCM devices
+# PRIMARY DEVICES (Option #1 - PREFERRED)
+# User-friendly device names matching hardware labeling
+
+# TRUSDX - TX path (apps → truSDX)
+pcm.TRUSDX {
+    type plug
+    slave {
+        pcm "hw:1,0,0"
+        # Allow automatic rate/format conversion
+        # JS8Call/WSJT-X will negotiate the best settings
+    }
+    hint {
+        show on
+        description "TRUSDX - Audio output to radio (TX)"
+    }
+}
+
+ctl.TRUSDX {
+    type hw
+    card 1
+}
+
+# TRUSDX.monitor - RX path (truSDX → apps)
+pcm."TRUSDX.monitor" {
+    type plug
+    slave {
+        pcm "hw:1,1,0"
+        # Allow automatic rate/format conversion
+        # JS8Call/WSJT-X will negotiate the best settings
+    }
+    hint {
+        show on
+        description "TRUSDX.monitor - Audio input from radio (RX)"
+    }
+}
+
+ctl."TRUSDX.monitor" {
+    type hw
+    card 1
+}
+
+# TRUSDX_monitor - Alternative naming for compatibility
+pcm.TRUSDX_monitor {
+    type plug
+    slave {
+        pcm "hw:1,1,0"
+    }
+}
+
+# LEGACY DEVICES (Option #2 - kept for backwards compatibility)
+# These names are deprecated but kept for existing configurations
+
 pcm.trusdx_tx {
     type plug
-    slave.pcm "hw:Loopback,0,0"
+    slave {
+        pcm "hw:1,0,0"
+    }
+    hint {
+        show on
+        description "[Legacy] truSDX TX - Audio output to radio"
+    }
+}
+
+ctl.trusdx_tx {
+    type hw
+    card 1
 }
 
 pcm.trusdx_rx {
     type plug
-    slave.pcm "hw:Loopback,1,0"
+    slave {
+        pcm "hw:1,1,0"
+    }
+    hint {
+        show on
+        description "[Legacy] truSDX RX - Audio input from radio"
+    }
 }
 
-# Application-friendly aliases
-pcm.trusdx_tx_app {
-    type plug
-    slave.pcm "hw:Loopback,0,0"
+ctl.trusdx_rx {
+    type hw
+    card 1
 }
 
-pcm.trusdx_rx_app {
-    type plug
-    slave.pcm "hw:Loopback,1,0"
-}
+# Extra sub-devices for WSJT-X compatibility
+pcm.trusdx_tx_app { type plug; slave.pcm "hw:0,1" }   # free playback
+ctl.trusdx_tx_app { type hw; card TRUSDX }
+pcm.trusdx_rx_app { type plug; slave.pcm "hw:1,1" }   # free capture
+ctl.trusdx_rx_app { type hw; card TRUSDX }
 ALSA
     
-    echo -e "${c_green}Created ALSA PCM devices: trusdx_tx, trusdx_rx, trusdx_tx_app, and trusdx_rx_app${c_reset}"
+    echo -e "${c_green}Created ALSA PCM devices with proper hints for Qt applications${c_reset}"
+    
+    # Create system-wide configuration for better visibility
+    SYSTEM_ALSA_DIR="/usr/share/alsa/alsa.conf.d"
+    if [[ -d "${SYSTEM_ALSA_DIR}" ]]; then
+      echo -e "${c_blue}Creating system-wide ALSA configuration...${c_reset}"
+      cat > /tmp/99-trusdx.conf <<'SYSALSA'
+# truSDX ALSA PCM devices configuration
+# This file makes trusdx_tx and trusdx_rx visible to all applications
+
+# TX device - Audio output to radio (WSJT-X/JS8Call transmit audio)
+pcm.trusdx_tx {
+    type plug
+    slave {
+        pcm "hw:0,0"
+        # Allow automatic format conversion
+        # Applications will negotiate the best format
+    }
+    hint {
+        show on
+        description "truSDX TX - Audio output to radio"
+    }
+}
+
+ctl.trusdx_tx {
+    type hw
+    card TRUSDX
+}
+
+# RX device - Audio input from radio (WSJT-X/JS8Call receive audio)
+pcm.trusdx_rx {
+    type plug
+    slave {
+        pcm "hw:0,1"
+        # Allow automatic format conversion
+        # Applications will negotiate the best format
+    }
+    hint {
+        show on
+        description "truSDX RX - Audio input from radio"
+    }
+}
+
+ctl.trusdx_rx {
+    type hw
+    card TRUSDX
+}
+SYSALSA
+      sudo cp /tmp/99-trusdx.conf "${SYSTEM_ALSA_DIR}/99-trusdx.conf"
+      rm /tmp/99-trusdx.conf
+      echo -e "${c_green}Created system-wide ALSA configuration${c_reset}"
+    fi
     
     # Restore ALSA settings
     alsactl restore 2>/dev/null || true
+    sudo alsactl nrestore 2>/dev/null || true
     
-    echo -e "${c_yellow}Note: You may need to logout and login for the new PCM devices to appear in all applications.${c_reset}"
+    echo -e "${c_green}ALSA devices configured successfully!${c_reset}"
+    echo -e "${c_yellow}Note: The devices 'trusdx_tx' and 'trusdx_rx' should now be visible in JS8Call/WSJT-X${c_reset}"
+); then
+  log_step "[4/6] Setting up ALSA loopback" OK
+else
+  log_step "[4/6] Setting up ALSA loopback" FAIL "$?"
+fi
+
+# Setup PipeWire virtual sink if PipeWire is available
+if (
+  # Check if PipeWire is running
+  if systemctl --user --quiet is-active pipewire; then
+    echo -e "${c_blue}[4b/6] Setting up PipeWire virtual devices...${c_reset}"
+    
+    # Create PipeWire config directory
+    PW_DIR="${HOME}/.config/pipewire/pipewire.conf.d"
+    mkdir -p "${PW_DIR}"
+    
+    # Create PipeWire configuration for TRUSDX virtual sink
+    PW_FILE="${PW_DIR}/90-trusdx.conf"
+    cat > "${PW_FILE}" <<'PWCONF'
+context.objects = [
+    {
+        factory = adapter
+        args = {
+            factory.name     = support.null-audio-sink
+            node.name        = "TRUSDX"
+            node.description = "TRUSDX Virtual Sink"
+            media.class      = "Audio/Sink"
+            audio.position   = "FL,FR"
+        }
+    }
+]
+PWCONF
+    echo -e "${c_green}Created PipeWire configuration for TRUSDX virtual sink${c_reset}"
+    
+    # Restart PipeWire to apply changes
+    systemctl --user restart pipewire pipewire-pulse 2>/dev/null || true
+    sleep 2
+    
+    # Verify the virtual sink was created
+    if pactl list short sinks 2>/dev/null | grep -q "TRUSDX"; then
+      echo -e "${c_green}✓ TRUSDX PipeWire virtual sink created successfully${c_reset}"
+      echo -e "${c_green}✓ TRUSDX.monitor source will be available for input${c_reset}"
+    else
+      echo -e "${c_yellow}⚠ TRUSDX virtual sink not detected yet (may require restart)${c_reset}"
+    fi
+  else
+    echo -e "${c_yellow}PipeWire not detected, skipping virtual sink setup${c_reset}"
+    echo -e "${c_yellow}Using ALSA loopback devices only${c_reset}"
   fi
 ); then
-  log_step "[4/5] Setting up ALSA loopback" OK
+  log_step "[4b/6] Setting up PipeWire virtual devices" OK
 else
-  log_step "[4/5] Setting up ALSA loopback" FAIL "$?"
+  # Not a critical failure if PipeWire isn't present
+  if systemctl --user --quiet is-active pipewire; then
+    log_step "[4b/6] Setting up PipeWire virtual devices" FAIL "$?"
+  else
+    log_step "[4b/6] Setting up PipeWire virtual devices" OK "(skipped - no PipeWire)"
+  fi
 fi
 
 # Create default config file
 if (
-  echo -e "${c_blue}[5/5] Creating configuration...${c_reset}"
+  echo -e "${c_blue}[5/6] Creating configuration...${c_reset}"
   CONF_DIR="${HOME}/.config"
   CONF_FILE="${CONF_DIR}/trusdx-ai.json"
   mkdir -p "${CONF_DIR}"
@@ -177,9 +341,67 @@ JSON
     echo -e "${c_green}Config file already exists at ${CONF_FILE}${c_reset}"
   fi
 ); then
-  log_step "[5/5] Creating configuration" OK
+  log_step "[5/6] Creating configuration" OK
 else
-  log_step "[5/5] Creating configuration" FAIL "$?"
+  log_step "[5/6] Creating configuration" FAIL "$?"
+fi
+
+# Setup systemd service for automatic USB monitoring
+if (
+  echo -e "${c_blue}[6/6] Setting up TRUSDX.monitor service...${c_reset}"
+  
+  # Create symlink to avoid space issues in path
+  if [[ ! -L "/opt/trusdx" ]]; then
+    sudo ln -s "$(pwd)" /opt/trusdx
+    echo -e "${c_green}Created symlink /opt/trusdx${c_reset}"
+  fi
+  
+  # Make monitor script executable
+  if [[ -f "trusdx-monitor.sh" ]]; then
+    chmod +x trusdx-monitor.sh
+    echo -e "${c_green}Made trusdx-monitor.sh executable${c_reset}"
+  else
+    echo -e "${c_yellow}WARNING: trusdx-monitor.sh not found${c_reset}"
+  fi
+  
+  # Create systemd service file
+  cat > /tmp/TRUSDX.monitor.service <<'SYSTEMD'
+[Unit]
+Description=truSDX USB connection monitor
+After=network.target multi-user.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=$USER
+Environment="PYTHONUNBUFFERED=1"
+WorkingDirectory=/opt/trusdx
+ExecStart=/opt/trusdx/trusdx-monitor.sh
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+SYSTEMD
+  
+  # Replace $USER in service file
+  sed -i "s/\$USER/$USER/g" /tmp/TRUSDX.monitor.service
+  
+  # Install and enable service
+  sudo cp /tmp/TRUSDX.monitor.service /etc/systemd/system/TRUSDX.monitor.service
+  rm /tmp/TRUSDX.monitor.service
+  sudo systemctl daemon-reload
+  sudo systemctl enable TRUSDX.monitor.service
+  
+  echo -e "${c_green}TRUSDX.monitor service installed and enabled${c_reset}"
+  echo -e "${c_yellow}The service will start automatically on boot${c_reset}"
+  echo -e "${c_yellow}To start it now: sudo systemctl start TRUSDX.monitor${c_reset}"
+); then
+  log_step "[6/6] Setting up TRUSDX.monitor service" OK
+else
+  log_step "[6/6] Setting up TRUSDX.monitor service" FAIL "$?"
 fi
 
 # Verify installation
@@ -241,8 +463,8 @@ echo -e "For WSJT-X/JS8Call configuration:"
 echo -e "  • Radio: Kenwood TS-480"
 echo -e "  • Port: /tmp/trusdx_cat"
 echo -e "  • Baud: 115200"
-echo -e "  • Audio Input: trusdx_rx_app (or hw:Loopback,1,0)"
-echo -e "  • Audio Output: trusdx_tx_app (or hw:Loopback,0,0)"
+echo -e "  • Audio Input: ${c_green}TRUSDX_monitor${c_reset} or ${c_green}TRUSDX.monitor${c_reset} (for receiving from radio)"
+echo -e "  • Audio Output: ${c_green}TRUSDX${c_reset} (for transmitting to radio)"
 echo -e "${c_yellow}Troubleshooting: If hw:Loopback does not exist, run 'sudo modprobe snd-aloop' and reboot${c_reset}"
 
 echo
