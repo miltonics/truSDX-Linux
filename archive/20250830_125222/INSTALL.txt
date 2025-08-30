@@ -1,0 +1,44 @@
+TRUSDX-AI DRIVER - QUICK INSTALL GUIDE
+======================================
+
+PROVEN WORKING - CONTACT MADE!
+
+1. CONNECT TRUSDX
+   - Connect truSDX to computer via USB cable
+
+2. EXTRACT FILES
+   - Extract this folder to your desired location
+   - Open terminal in this folder
+
+3. RUN SETUP
+   - Make setup script executable: chmod +x setup.sh
+   - Run setup: ./setup.sh
+   - Enter password when prompted for sudo
+
+4. START DRIVER
+   - Run: ./trusdx-txrx-AI.py
+   - Leave terminal open while using
+
+5. CONFIGURE WSJT-X
+   - Radio: Kenwood TS-480
+   - Serial Port: /tmp/trusdx_cat
+   - Baud: 115200
+   - Audio In: ALSA Loopback card 0 (hw:Loopback,1,0)
+   - Audio Out: ALSA Loopback card 0 (hw:Loopback,0,0)
+   - PTT: CAT
+   - Poll: 80ms
+
+6. TEST
+   - Start WSJT-X
+   - Check VU meter shows activity
+   - Try changing frequency/band
+   - Make a contact!
+
+TROUBLESHOTING:
+- If no audio: check ALSA loopback exists with 'aplay -l | grep Loopback'
+- If `hw:Loopback` does not exist, run `sudo modprobe snd-aloop` and reboot
+- If no CAT: check USB connection and restart driver
+- For help: run with --verbose flag
+
+Enjoy and 73!
+

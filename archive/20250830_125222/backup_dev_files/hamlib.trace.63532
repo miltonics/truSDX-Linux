@@ -1,0 +1,35 @@
+rseq(0x7500f75fffe0, 0x20, 0, 0x53053053) = 0
+set_robust_list(0x7500f75ff9a0, 24)     = 0
+rt_sigprocmask(SIG_SETMASK, [], NULL, 8) = 0
+futex(0x7500f867cf40, FUTEX_WAIT_PRIVATE, 2, NULL) = -1 EAGAIN (Resource temporarily unavailable)
+write(2, "morse_data_handler: Starting mor"..., 55) = 55
+futex(0x7500f867cf40, FUTEX_WAKE_PRIVATE, 1) = 1
+mmap(NULL, 134217728, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0x7500eec00000
+munmap(0x7500eec00000, 20971520)        = 0
+munmap(0x7500f4000000, 46137344)        = 0
+mprotect(0x7500f0000000, 135168, PROT_READ|PROT_WRITE) = 0
+clock_nanosleep(CLOCK_REALTIME, 0, {tv_sec=0, tv_nsec=99900000}, NULL) = 0
+clock_nanosleep(CLOCK_REALTIME, 0, {tv_sec=0, tv_nsec=99900000}, NULL) = 0
+clock_nanosleep(CLOCK_REALTIME, 0, {tv_sec=0, tv_nsec=99900000}, NULL) = 0
+clock_nanosleep(CLOCK_REALTIME, 0, {tv_sec=0, tv_nsec=99900000}, NULL) = 0
+clock_nanosleep(CLOCK_REALTIME, 0, {tv_sec=0, tv_nsec=99900000}, NULL) = 0
+clock_nanosleep(CLOCK_REALTIME, 0, {tv_sec=0, tv_nsec=99900000}, NULL) = 0
+openat(AT_FDCWD, "/etc/ld.so.cache", O_RDONLY|O_CLOEXEC) = 4
+fstat(4, {st_mode=S_IFREG|0644, st_size=77071, ...}) = 0
+mmap(NULL, 77071, PROT_READ, MAP_PRIVATE, 4, 0) = 0x7500f88db000
+close(4)                                = 0
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libgcc_s.so.1", O_RDONLY|O_CLOEXEC) = 4
+read(4, "\177ELF\2\1\1\0\0\0\0\0\0\0\0\0\3\0>\0\1\0\0\0\0\0\0\0\0\0\0\0"..., 832) = 832
+fstat(4, {st_mode=S_IFREG|0644, st_size=183024, ...}) = 0
+mmap(NULL, 185256, PROT_READ, MAP_PRIVATE|MAP_DENYWRITE, 4, 0) = 0x7500f86d9000
+mmap(0x7500f86dd000, 147456, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 4, 0x4000) = 0x7500f86dd000
+mmap(0x7500f8701000, 16384, PROT_READ, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 4, 0x28000) = 0x7500f8701000
+mmap(0x7500f8705000, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 4, 0x2b000) = 0x7500f8705000
+close(4)                                = 0
+mprotect(0x7500f8705000, 4096, PROT_READ) = 0
+munmap(0x7500f88db000, 77071)           = 0
+futex(0x7500f8706230, FUTEX_WAKE_PRIVATE, 2147483647) = 0
+rt_sigprocmask(SIG_BLOCK, ~[RT_1], NULL, 8) = 0
+madvise(0x7500f6dff000, 8368128, MADV_DONTNEED) = 0
+exit(0)                                 = ?
++++ exited with 0 +++

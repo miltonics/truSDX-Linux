@@ -1,0 +1,119 @@
+execve("/usr/local/bin/rigctl", ["rigctl", "-m", "369", "-r", "/tmp/trusdx_cat", "-vvvv", "FA"], 0x7ffc079ea4b8 /* 54 vars */) = 0
+brk(NULL)                               = 0x58e57e0da000
+mmap(NULL, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0x7575bf95e000
+access("/etc/ld.so.preload", R_OK)      = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/etc/ld.so.cache", O_RDONLY|O_CLOEXEC) = 3
+fstat(3, {st_mode=S_IFREG|0644, st_size=77071, ...}) = 0
+mmap(NULL, 77071, PROT_READ, MAP_PRIVATE, 3, 0) = 0x7575bf94b000
+close(3)                                = 0
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libreadline.so.8", O_RDONLY|O_CLOEXEC) = 3
+read(3, "\177ELF\2\1\1\0\0\0\0\0\0\0\0\0\3\0>\0\1\0\0\0\0\0\0\0\0\0\0\0"..., 832) = 832
+fstat(3, {st_mode=S_IFREG|0644, st_size=344096, ...}) = 0
+mmap(NULL, 347640, PROT_READ, MAP_PRIVATE|MAP_DENYWRITE, 3, 0) = 0x7575bf8f6000
+mmap(0x7575bf90b000, 188416, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x15000) = 0x7575bf90b000
+mmap(0x7575bf939000, 36864, PROT_READ, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x43000) = 0x7575bf939000
+mmap(0x7575bf942000, 32768, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x4c000) = 0x7575bf942000
+mmap(0x7575bf94a000, 3576, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_ANONYMOUS, -1, 0) = 0x7575bf94a000
+close(3)                                = 0
+openat(AT_FDCWD, "/usr/local/lib/libhamlib.so.4", O_RDONLY|O_CLOEXEC) = 3
+read(3, "\177ELF\2\1\1\0\0\0\0\0\0\0\0\0\3\0>\0\1\0\0\0\0\0\0\0\0\0\0\0"..., 832) = 832
+fstat(3, {st_mode=S_IFREG|0755, st_size=27372792, ...}) = 0
+mmap(NULL, 13169336, PROT_READ, MAP_PRIVATE|MAP_DENYWRITE, 3, 0) = 0x7575bec00000
+mmap(0x7575bec8d000, 2322432, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x8d000) = 0x7575bec8d000
+mmap(0x7575beec4000, 749568, PROT_READ, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x2c4000) = 0x7575beec4000
+mmap(0x7575bef7b000, 8781824, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x37b000) = 0x7575bef7b000
+mmap(0x7575bf7db000, 737976, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_ANONYMOUS, -1, 0) = 0x7575bf7db000
+close(3)                                = 0
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libc.so.6", O_RDONLY|O_CLOEXEC) = 3
+read(3, "\177ELF\2\1\1\3\0\0\0\0\0\0\0\0\3\0>\0\1\0\0\0\220\243\2\0\0\0\0\0"..., 832) = 832
+pread64(3, "\6\0\0\0\4\0\0\0@\0\0\0\0\0\0\0@\0\0\0\0\0\0\0@\0\0\0\0\0\0\0"..., 784, 64) = 784
+fstat(3, {st_mode=S_IFREG|0755, st_size=2125328, ...}) = 0
+pread64(3, "\6\0\0\0\4\0\0\0@\0\0\0\0\0\0\0@\0\0\0\0\0\0\0@\0\0\0\0\0\0\0"..., 784, 64) = 784
+mmap(NULL, 2170256, PROT_READ, MAP_PRIVATE|MAP_DENYWRITE, 3, 0) = 0x7575be800000
+mmap(0x7575be828000, 1605632, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x28000) = 0x7575be828000
+mmap(0x7575be9b0000, 323584, PROT_READ, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x1b0000) = 0x7575be9b0000
+mmap(0x7575be9ff000, 24576, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x1fe000) = 0x7575be9ff000
+mmap(0x7575bea05000, 52624, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_ANONYMOUS, -1, 0) = 0x7575bea05000
+close(3)                                = 0
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libtinfo.so.6", O_RDONLY|O_CLOEXEC) = 3
+read(3, "\177ELF\2\1\1\0\0\0\0\0\0\0\0\0\3\0>\0\1\0\0\0\0\0\0\0\0\0\0\0"..., 832) = 832
+fstat(3, {st_mode=S_IFREG|0644, st_size=208328, ...}) = 0
+mmap(NULL, 211240, PROT_READ, MAP_PRIVATE|MAP_DENYWRITE, 3, 0) = 0x7575bf8c2000
+mmap(0x7575bf8d0000, 77824, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0xe000) = 0x7575bf8d0000
+mmap(0x7575bf8e3000, 57344, PROT_READ, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x21000) = 0x7575bf8e3000
+mmap(0x7575bf8f1000, 20480, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x2e000) = 0x7575bf8f1000
+close(3)                                = 0
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libm.so.6", O_RDONLY|O_CLOEXEC) = 3
+read(3, "\177ELF\2\1\1\3\0\0\0\0\0\0\0\0\3\0>\0\1\0\0\0\0\0\0\0\0\0\0\0"..., 832) = 832
+fstat(3, {st_mode=S_IFREG|0644, st_size=952616, ...}) = 0
+mmap(NULL, 950296, PROT_READ, MAP_PRIVATE|MAP_DENYWRITE, 3, 0) = 0x7575beb17000
+mmap(0x7575beb27000, 520192, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x10000) = 0x7575beb27000
+mmap(0x7575beba6000, 360448, PROT_READ, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x8f000) = 0x7575beba6000
+mmap(0x7575bebfe000, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0xe7000) = 0x7575bebfe000
+close(3)                                = 0
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libusb-1.0.so.0", O_RDONLY|O_CLOEXEC) = 3
+read(3, "\177ELF\2\1\1\0\0\0\0\0\0\0\0\0\3\0>\0\1\0\0\0\0\0\0\0\0\0\0\0"..., 832) = 832
+fstat(3, {st_mode=S_IFREG|0644, st_size=117736, ...}) = 0
+mmap(NULL, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0x7575bf8c0000
+mmap(NULL, 119944, PROT_READ, MAP_PRIVATE|MAP_DENYWRITE, 3, 0) = 0x7575bf8a2000
+mmap(0x7575bf8a6000, 65536, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x4000) = 0x7575bf8a6000
+mmap(0x7575bf8b6000, 32768, PROT_READ, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x14000) = 0x7575bf8b6000
+mmap(0x7575bf8be000, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x1b000) = 0x7575bf8be000
+close(3)                                = 0
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libudev.so.1", O_RDONLY|O_CLOEXEC) = 3
+read(3, "\177ELF\2\1\1\0\0\0\0\0\0\0\0\0\3\0>\0\1\0\0\0\0\0\0\0\0\0\0\0"..., 832) = 832
+fstat(3, {st_mode=S_IFREG|0644, st_size=207288, ...}) = 0
+mmap(NULL, 207160, PROT_READ, MAP_PRIVATE|MAP_DENYWRITE, 3, 0) = 0x7575beae4000
+mmap(0x7575beae9000, 139264, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x5000) = 0x7575beae9000
+mmap(0x7575beb0b000, 40960, PROT_READ, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x27000) = 0x7575beb0b000
+mmap(0x7575beb15000, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x31000) = 0x7575beb15000
+close(3)                                = 0
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libcap.so.2", O_RDONLY|O_CLOEXEC) = 3
+read(3, "\177ELF\2\1\1\0\0\0\0\0\0\0\0\0\3\0>\0\1\0\0\0\340\201\0\0\0\0\0\0"..., 832) = 832
+fstat(3, {st_mode=S_IFREG|0644, st_size=51536, ...}) = 0
+mmap(NULL, 49224, PROT_READ, MAP_PRIVATE|MAP_DENYWRITE, 3, 0) = 0x7575bf895000
+mmap(0x7575bf898000, 24576, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x3000) = 0x7575bf898000
+mmap(0x7575bf89e000, 8192, PROT_READ, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x9000) = 0x7575bf89e000
+mmap(0x7575bf8a0000, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0xb000) = 0x7575bf8a0000
+close(3)                                = 0
+mmap(NULL, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0x7575bf893000
+arch_prctl(ARCH_SET_FS, 0x7575bf8943c0) = 0
+set_tid_address(0x7575bf894690)         = 62812
+set_robust_list(0x7575bf8946a0, 24)     = 0
+rseq(0x7575bf894ce0, 0x20, 0, 0x53053053) = 0
+mprotect(0x7575be9ff000, 16384, PROT_READ) = 0
+mprotect(0x7575bf8a0000, 4096, PROT_READ) = 0
+mprotect(0x7575beb15000, 4096, PROT_READ) = 0
+mprotect(0x7575bf8be000, 4096, PROT_READ) = 0
+mprotect(0x7575bebfe000, 4096, PROT_READ) = 0
+mprotect(0x7575bf8f1000, 16384, PROT_READ) = 0
+mprotect(0x7575bef7b000, 503808, PROT_READ) = 0
+mprotect(0x7575bf942000, 8192, PROT_READ) = 0
+mprotect(0x58e56a1f5000, 4096, PROT_READ) = 0
+mprotect(0x7575bf996000, 8192, PROT_READ) = 0
+prlimit64(0, RLIMIT_STACK, NULL, {rlim_cur=8192*1024, rlim_max=RLIM64_INFINITY}) = 0
+munmap(0x7575bf94b000, 77071)           = 0
+prctl(PR_CAPBSET_READ, CAP_MAC_OVERRIDE) = 1
+prctl(PR_CAPBSET_READ, 0x30 /* CAP_??? */) = -1 EINVAL (Invalid argument)
+prctl(PR_CAPBSET_READ, CAP_CHECKPOINT_RESTORE) = 1
+prctl(PR_CAPBSET_READ, 0x2c /* CAP_??? */) = -1 EINVAL (Invalid argument)
+prctl(PR_CAPBSET_READ, 0x2a /* CAP_??? */) = -1 EINVAL (Invalid argument)
+prctl(PR_CAPBSET_READ, 0x29 /* CAP_??? */) = -1 EINVAL (Invalid argument)
+write(2, "rigctl.c(532) Startup: rigctl -m"..., 65) = 65
+write(2, "rigctl Hamlib 4.6.3 2025-06-10T0"..., 59) = 59
+write(2, "Report bugs to <hamlib-developer"..., 57) = 57
+getrandom("\x1a\x48\xf0\x4b\x0d\x56\x41\x25", 8, GRND_NONBLOCK) = 8
+brk(NULL)                               = 0x58e57e0da000
+brk(0x58e57e0fb000)                     = 0x58e57e0fb000
+openat(AT_FDCWD, "/etc/localtime", O_RDONLY|O_CLOEXEC) = 3
+fstat(3, {st_mode=S_IFREG|0644, st_size=2230, ...}) = 0
+fstat(3, {st_mode=S_IFREG|0644, st_size=2230, ...}) = 0
+read(3, "TZif2\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\6\0\0\0\6\0\0\0\0"..., 4096) = 2230
+lseek(3, -1409, SEEK_CUR)               = 821
+read(3, "TZif2\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\6\0\0\0\6\0\0\0\0"..., 4096) = 1409
+close(3)                                = 0
+write(2, "rig_init: 2038 time test passed\n", 32) = 32
+write(2, "initrigs4_dummy: _init called\n", 30) = 30
+write(2, "Unknown rig num 369, or initiali"..., 79) = 79
+exit_group(2)                           = ?
++++ exited with 2 +++

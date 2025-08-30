@@ -1,0 +1,332 @@
+execve("/usr/local/bin/rigctl", ["rigctl", "-m", "2028", "-r", "/tmp/trusdx_cat", "-vvvv", "FA"], 0x7fff5c6cba38 /* 54 vars */) = 0
+brk(NULL)                               = 0x61b5a6af5000
+mmap(NULL, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0x78d4ac539000
+access("/etc/ld.so.preload", R_OK)      = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/etc/ld.so.cache", O_RDONLY|O_CLOEXEC) = 3
+fstat(3, {st_mode=S_IFREG|0644, st_size=77071, ...}) = 0
+mmap(NULL, 77071, PROT_READ, MAP_PRIVATE, 3, 0) = 0x78d4ac526000
+close(3)                                = 0
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libreadline.so.8", O_RDONLY|O_CLOEXEC) = 3
+read(3, "\177ELF\2\1\1\0\0\0\0\0\0\0\0\0\3\0>\0\1\0\0\0\0\0\0\0\0\0\0\0"..., 832) = 832
+fstat(3, {st_mode=S_IFREG|0644, st_size=344096, ...}) = 0
+mmap(NULL, 347640, PROT_READ, MAP_PRIVATE|MAP_DENYWRITE, 3, 0) = 0x78d4ac4d1000
+mmap(0x78d4ac4e6000, 188416, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x15000) = 0x78d4ac4e6000
+mmap(0x78d4ac514000, 36864, PROT_READ, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x43000) = 0x78d4ac514000
+mmap(0x78d4ac51d000, 32768, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x4c000) = 0x78d4ac51d000
+mmap(0x78d4ac525000, 3576, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_ANONYMOUS, -1, 0) = 0x78d4ac525000
+close(3)                                = 0
+openat(AT_FDCWD, "/usr/local/lib/libhamlib.so.4", O_RDONLY|O_CLOEXEC) = 3
+read(3, "\177ELF\2\1\1\0\0\0\0\0\0\0\0\0\3\0>\0\1\0\0\0\0\0\0\0\0\0\0\0"..., 832) = 832
+fstat(3, {st_mode=S_IFREG|0755, st_size=27372792, ...}) = 0
+mmap(NULL, 13169336, PROT_READ, MAP_PRIVATE|MAP_DENYWRITE, 3, 0) = 0x78d4ab800000
+mmap(0x78d4ab88d000, 2322432, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x8d000) = 0x78d4ab88d000
+mmap(0x78d4abac4000, 749568, PROT_READ, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x2c4000) = 0x78d4abac4000
+mmap(0x78d4abb7b000, 8781824, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x37b000) = 0x78d4abb7b000
+mmap(0x78d4ac3db000, 737976, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_ANONYMOUS, -1, 0) = 0x78d4ac3db000
+close(3)                                = 0
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libc.so.6", O_RDONLY|O_CLOEXEC) = 3
+read(3, "\177ELF\2\1\1\3\0\0\0\0\0\0\0\0\3\0>\0\1\0\0\0\220\243\2\0\0\0\0\0"..., 832) = 832
+pread64(3, "\6\0\0\0\4\0\0\0@\0\0\0\0\0\0\0@\0\0\0\0\0\0\0@\0\0\0\0\0\0\0"..., 784, 64) = 784
+fstat(3, {st_mode=S_IFREG|0755, st_size=2125328, ...}) = 0
+pread64(3, "\6\0\0\0\4\0\0\0@\0\0\0\0\0\0\0@\0\0\0\0\0\0\0@\0\0\0\0\0\0\0"..., 784, 64) = 784
+mmap(NULL, 2170256, PROT_READ, MAP_PRIVATE|MAP_DENYWRITE, 3, 0) = 0x78d4ab400000
+mmap(0x78d4ab428000, 1605632, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x28000) = 0x78d4ab428000
+mmap(0x78d4ab5b0000, 323584, PROT_READ, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x1b0000) = 0x78d4ab5b0000
+mmap(0x78d4ab5ff000, 24576, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x1fe000) = 0x78d4ab5ff000
+mmap(0x78d4ab605000, 52624, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_ANONYMOUS, -1, 0) = 0x78d4ab605000
+close(3)                                = 0
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libtinfo.so.6", O_RDONLY|O_CLOEXEC) = 3
+read(3, "\177ELF\2\1\1\0\0\0\0\0\0\0\0\0\3\0>\0\1\0\0\0\0\0\0\0\0\0\0\0"..., 832) = 832
+fstat(3, {st_mode=S_IFREG|0644, st_size=208328, ...}) = 0
+mmap(NULL, 211240, PROT_READ, MAP_PRIVATE|MAP_DENYWRITE, 3, 0) = 0x78d4ac49d000
+mmap(0x78d4ac4ab000, 77824, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0xe000) = 0x78d4ac4ab000
+mmap(0x78d4ac4be000, 57344, PROT_READ, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x21000) = 0x78d4ac4be000
+mmap(0x78d4ac4cc000, 20480, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x2e000) = 0x78d4ac4cc000
+close(3)                                = 0
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libm.so.6", O_RDONLY|O_CLOEXEC) = 3
+read(3, "\177ELF\2\1\1\3\0\0\0\0\0\0\0\0\3\0>\0\1\0\0\0\0\0\0\0\0\0\0\0"..., 832) = 832
+fstat(3, {st_mode=S_IFREG|0644, st_size=952616, ...}) = 0
+mmap(NULL, 950296, PROT_READ, MAP_PRIVATE|MAP_DENYWRITE, 3, 0) = 0x78d4ab717000
+mmap(0x78d4ab727000, 520192, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x10000) = 0x78d4ab727000
+mmap(0x78d4ab7a6000, 360448, PROT_READ, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x8f000) = 0x78d4ab7a6000
+mmap(0x78d4ab7fe000, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0xe7000) = 0x78d4ab7fe000
+close(3)                                = 0
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libusb-1.0.so.0", O_RDONLY|O_CLOEXEC) = 3
+read(3, "\177ELF\2\1\1\0\0\0\0\0\0\0\0\0\3\0>\0\1\0\0\0\0\0\0\0\0\0\0\0"..., 832) = 832
+fstat(3, {st_mode=S_IFREG|0644, st_size=117736, ...}) = 0
+mmap(NULL, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0x78d4ac49b000
+mmap(NULL, 119944, PROT_READ, MAP_PRIVATE|MAP_DENYWRITE, 3, 0) = 0x78d4ab6f9000
+mmap(0x78d4ab6fd000, 65536, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x4000) = 0x78d4ab6fd000
+mmap(0x78d4ab70d000, 32768, PROT_READ, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x14000) = 0x78d4ab70d000
+mmap(0x78d4ab715000, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x1b000) = 0x78d4ab715000
+close(3)                                = 0
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libudev.so.1", O_RDONLY|O_CLOEXEC) = 3
+read(3, "\177ELF\2\1\1\0\0\0\0\0\0\0\0\0\3\0>\0\1\0\0\0\0\0\0\0\0\0\0\0"..., 832) = 832
+fstat(3, {st_mode=S_IFREG|0644, st_size=207288, ...}) = 0
+mmap(NULL, 207160, PROT_READ, MAP_PRIVATE|MAP_DENYWRITE, 3, 0) = 0x78d4ab6c6000
+mmap(0x78d4ab6cb000, 139264, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x5000) = 0x78d4ab6cb000
+mmap(0x78d4ab6ed000, 40960, PROT_READ, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x27000) = 0x78d4ab6ed000
+mmap(0x78d4ab6f7000, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x31000) = 0x78d4ab6f7000
+close(3)                                = 0
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libcap.so.2", O_RDONLY|O_CLOEXEC) = 3
+read(3, "\177ELF\2\1\1\0\0\0\0\0\0\0\0\0\3\0>\0\1\0\0\0\340\201\0\0\0\0\0\0"..., 832) = 832
+fstat(3, {st_mode=S_IFREG|0644, st_size=51536, ...}) = 0
+mmap(NULL, 49224, PROT_READ, MAP_PRIVATE|MAP_DENYWRITE, 3, 0) = 0x78d4ab6b9000
+mmap(0x78d4ab6bc000, 24576, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x3000) = 0x78d4ab6bc000
+mmap(0x78d4ab6c2000, 8192, PROT_READ, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x9000) = 0x78d4ab6c2000
+mmap(0x78d4ab6c4000, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0xb000) = 0x78d4ab6c4000
+close(3)                                = 0
+mmap(NULL, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0x78d4ac499000
+arch_prctl(ARCH_SET_FS, 0x78d4ac49a3c0) = 0
+set_tid_address(0x78d4ac49a690)         = 62985
+set_robust_list(0x78d4ac49a6a0, 24)     = 0
+rseq(0x78d4ac49ace0, 0x20, 0, 0x53053053) = 0
+mprotect(0x78d4ab5ff000, 16384, PROT_READ) = 0
+mprotect(0x78d4ab6c4000, 4096, PROT_READ) = 0
+mprotect(0x78d4ab6f7000, 4096, PROT_READ) = 0
+mprotect(0x78d4ab715000, 4096, PROT_READ) = 0
+mprotect(0x78d4ab7fe000, 4096, PROT_READ) = 0
+mprotect(0x78d4ac4cc000, 16384, PROT_READ) = 0
+mprotect(0x78d4abb7b000, 503808, PROT_READ) = 0
+mprotect(0x78d4ac51d000, 8192, PROT_READ) = 0
+mprotect(0x61b56c30d000, 4096, PROT_READ) = 0
+mprotect(0x78d4ac571000, 8192, PROT_READ) = 0
+prlimit64(0, RLIMIT_STACK, NULL, {rlim_cur=8192*1024, rlim_max=RLIM64_INFINITY}) = 0
+munmap(0x78d4ac526000, 77071)           = 0
+prctl(PR_CAPBSET_READ, CAP_MAC_OVERRIDE) = 1
+prctl(PR_CAPBSET_READ, 0x30 /* CAP_??? */) = -1 EINVAL (Invalid argument)
+prctl(PR_CAPBSET_READ, CAP_CHECKPOINT_RESTORE) = 1
+prctl(PR_CAPBSET_READ, 0x2c /* CAP_??? */) = -1 EINVAL (Invalid argument)
+prctl(PR_CAPBSET_READ, 0x2a /* CAP_??? */) = -1 EINVAL (Invalid argument)
+prctl(PR_CAPBSET_READ, 0x29 /* CAP_??? */) = -1 EINVAL (Invalid argument)
+write(2, "rigctl.c(532) Startup: rigctl -m"..., 66) = 66
+write(2, "rigctl Hamlib 4.6.3 2025-06-10T0"..., 59) = 59
+write(2, "Report bugs to <hamlib-developer"..., 57) = 57
+getrandom("\x14\xb3\xd4\xf3\x9b\xbe\x1c\xcb", 8, GRND_NONBLOCK) = 8
+brk(NULL)                               = 0x61b5a6af5000
+brk(0x61b5a6b16000)                     = 0x61b5a6b16000
+openat(AT_FDCWD, "/etc/localtime", O_RDONLY|O_CLOEXEC) = 3
+fstat(3, {st_mode=S_IFREG|0644, st_size=2230, ...}) = 0
+fstat(3, {st_mode=S_IFREG|0644, st_size=2230, ...}) = 0
+read(3, "TZif2\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\6\0\0\0\6\0\0\0\0"..., 4096) = 2230
+lseek(3, -1409, SEEK_CUR)               = 821
+read(3, "TZif2\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\6\0\0\0\6\0\0\0\0"..., 4096) = 1409
+close(3)                                = 0
+write(2, "rig_init: 2038 time test passed\n", 32) = 32
+write(2, "rig_init: rig_model=Kenwood TS-4"..., 46) = 46
+write(2, "rig_init: rig has VFO_A\n", 24) = 24
+write(2, "rig_init: rig has VFO_B\n", 24) = 24
+write(2, "*1:ts480.c(1212):ts480_init ente"..., 36) = 36
+write(2, "kenwood_init called, version 202"..., 49) = 49
+write(2, "kenwood.c(899):kenwood_init retu"..., 43) = 43
+write(2, "*1:ts480.c(1227):ts480_init retu"..., 42) = 42
+write(2, "rig_set_conf called\n", 20)   = 20
+write(2, "rig_confparam_lookup called for "..., 45) = 45
+write(2, "rig_set_conf: rig_pathname='/tmp"..., 45) = 45
+write(2, "rig.c(970):rig_open entered\n", 28) = 28
+getcwd("/home/milton/Desktop/Trusdx Linux", 4096) = 34
+access("/home/milton/.config", F_OK)    = 0
+openat(AT_FDCWD, "/home/milton/.config/hamlib_settings", O_RDONLY) = -1 ENOENT (No such file or directory)
+getcwd("/home/milton/Desktop/Trusdx Linux", 4096) = 34
+openat(AT_FDCWD, "/home/milton/Desktop/Trusdx Linux/hamlib_settings", O_RDONLY) = -1 ENOENT (No such file or directory)
+write(2, "serial_open: /tmp/trusdx_cat\n", 29) = 29
+openat(AT_FDCWD, "/tmp/trusdx_cat", O_RDWR|O_NOCTTY|O_NONBLOCK) = 3
+ioctl(3, TCGETS, {c_iflag=ICRNL|IXON, c_oflag=NL0|CR0|TAB0|BS0|VT0|FF0|OPOST|ONLCR, c_cflag=B38400|CS8|CREAD, c_lflag=ISIG|ICANON|ECHO|ECHOE|ECHOK|IEXTEN|ECHOCTL|ECHOKE, ...}) = 0
+ioctl(3, TCFLSH, TCIFLUSH)              = 0
+ioctl(3, TCGETS, {c_iflag=ICRNL|IXON, c_oflag=NL0|CR0|TAB0|BS0|VT0|FF0|OPOST|ONLCR, c_cflag=B38400|CS8|CREAD, c_lflag=ISIG|ICANON|ECHO|ECHOE|ECHOK|IEXTEN|ECHOCTL|ECHOKE, ...}) = 0
+ioctl(3, TCSETS, {c_iflag=, c_oflag=NL0|CR0|TAB0|BS0|VT0|FF0|ONLCR, c_cflag=B115200|CS8|CREAD|CLOCAL, c_lflag=ECHOK|ECHOCTL|ECHOKE, ...}) = 0
+ioctl(3, TCGETS, {c_iflag=, c_oflag=NL0|CR0|TAB0|BS0|VT0|FF0|ONLCR, c_cflag=B115200|CS8|CREAD|CLOCAL, c_lflag=ECHOK|ECHOCTL|ECHOKE, ...}) = 0
+clock_nanosleep(CLOCK_REALTIME, 0, {tv_sec=0, tv_nsec=49900000}, NULL) = 0
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 0 (Timeout)
+ioctl(3, TCFLSH, TCIFLUSH)              = 0
+write(2, "rig_open: 0x61b5a6afde34 rs->com"..., 46) = 46
+clock_nanosleep(CLOCK_REALTIME, 0, {tv_sec=0, tv_nsec=99900000}, NULL) = 0
+write(2, "*1:rig.c(6899):rig_get_powerstat"..., 41) = 41
+write(2, "**2:kenwood.c(5382):kenwood_get_"..., 50) = 50
+write(2, "kenwood_safe_transaction called,"..., 52) = 52
+write(2, "kenwood_transaction called cmd=P"..., 34) = 34
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 0 (Timeout)
+ioctl(3, TCFLSH, TCIFLUSH)              = 0
+write(3, "PS;", 3)                      = 3
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=500000000}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=423183500})
+read(3, "}", 1)                         = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=500000000}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=499999046})
+read(3, "\177", 1)                      = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=500000000}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=499999555})
+read(3, "\201", 1)                      = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=500000000}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=499999556})
+read(3, "\207", 1)                      = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=500000000}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=499999554})
+read(3, "\206", 1)                      = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=500000000}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=499999464})
+read(3, "\203", 1)                      = 1
+write(2, "kenwood_transaction: Command is "..., 61) = 61
+write(2, "kenwood.c(713):kenwood_transacti"..., 66) = 66
+write(2, "kenwood.c(765):kenwood_safe_tran"..., 71) = 71
+clock_nanosleep(CLOCK_REALTIME, 0, {tv_sec=0, tv_nsec=499900000}, NULL) = 0
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "\177", 1)                      = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "{", 1)                         = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "y", 1)                         = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "|", 1)                         = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "\200", 1)                      = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "\207", 1)                      = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "\207", 1)                      = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "\200", 1)                      = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "{", 1)                         = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "y", 1)                         = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "}", 1)                         = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "\200", 1)                      = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "\206", 1)                      = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "\206", 1)                      = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "\204", 1)                      = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "~", 1)                         = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "z", 1)                         = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "|", 1)                         = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "}", 1)                         = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "}", 1)                         = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "\200", 1)                      = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "\206", 1)                      = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "\213", 1)                      = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "\203", 1)                      = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "}", 1)                         = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "w", 1)                         = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "~", 1)                         = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "~", 1)                         = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "}", 1)                         = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "|", 1)                         = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "\200", 1)                      = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "\211", 1)                      = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "\205", 1)                      = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "\201", 1)                      = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "y", 1)                         = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "z", 1)                         = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "{", 1)                         = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "~", 1)                         = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "\203", 1)                      = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "\207", 1)                      = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "\206", 1)                      = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "\177", 1)                      = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "{", 1)                         = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "{", 1)                         = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "}", 1)                         = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "~", 1)                         = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "\177", 1)                      = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "\201", 1)                      = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "\203", 1)                      = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "\201", 1)                      = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "\177", 1)                      = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "~", 1)                         = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "}", 1)                         = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "}", 1)                         = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "\201", 1)                      = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "\211", 1)                      = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "\204", 1)                      = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "\200", 1)                      = 1
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 0 (Timeout)
+ioctl(3, TCFLSH, TCIFLUSH)              = 0
+write(2, "kenwood_safe_transaction called,"..., 52) = 52
+write(2, "kenwood_transaction called cmd=P"..., 34) = 34
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 0 (Timeout)
+ioctl(3, TCFLSH, TCIFLUSH)              = 0
+write(3, "PS;", 3)                      = 3
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=500000000}, NULL) = 0 (Timeout)
+clock_nanosleep(CLOCK_REALTIME, 0, {tv_sec=0, tv_nsec=9900000}, NULL) = 0
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=500000000}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=221738316})
+read(3, "", 1)                          = 0
+write(2, "read_string_generic(): read fail"..., 73) = 73
+write(2, "kenwood_transaction: read_string"..., 84) = 84
+write(2, "kenwood.c(713):kenwood_transacti"..., 60) = 60
+write(2, "kenwood.c(765):kenwood_safe_tran"..., 65) = 65
+write(2, "**2:kenwood.c(5450):kenwood_get_"..., 66) = 66
+write(2, "*1:rig.c(6926):rig_get_powerstat"..., 57) = 57
+write(2, "*1:kenwood.c(921):kenwood_open e"..., 39) = 39
+write(2, "**2:kenwood.c(1206):kenwood_get_"..., 43) = 43
+write(2, "kenwood_transaction called cmd=I"..., 34) = 34
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "", 1)                          = 0
+write(2, "read_string_generic(): read fail"..., 73) = 73
+ioctl(3, TCFLSH, TCIFLUSH)              = -1 EIO (Input/output error)
+write(3, "ID;", 3)                      = -1 EIO (Input/output error)
+write(2, "write_block():1132 failed -1 - I"..., 50) = 50
+write(2, "kenwood.c(713):kenwood_transacti"..., 60) = 60
+write(2, "**2:kenwood.c(1213):kenwood_get_"..., 59) = 59
+clock_nanosleep(CLOCK_REALTIME, 0, {tv_sec=0, tv_nsec=199900000}, NULL) = 0
+write(2, "**2:kenwood.c(1206):kenwood_get_"..., 43) = 43
+write(2, "kenwood_transaction called cmd=I"..., 34) = 34
+pselect6(4, [3], NULL, [3], {tv_sec=0, tv_nsec=0}, NULL) = 1 (in [3], left {tv_sec=0, tv_nsec=0})
+read(3, "", 1)                          = 0
+write(2, "read_string_generic(): read fail"..., 66) = 66
+ioctl(3, TCFLSH, TCIFLUSH)              = -1 EIO (Input/output error)
+write(3, "ID;", 3)                      = -1 EIO (Input/output error)
+write(2, "write_block():1132 failed -1 - I"..., 50) = 50
+write(2, "kenwood.c(713):kenwood_transacti"..., 60) = 60
+write(2, "**2:kenwood.c(1213):kenwood_get_"..., 59) = 59
+write(2, "kenwood_open: no response to get"..., 65) = 65
+write(2, "kenwood_open: cannot get identif"..., 40) = 40
+write(2, "*1:kenwood.c(1051):kenwood_open "..., 56) = 56
+write(2, "ser_close: restoring options\n", 29) = 29
+ioctl(3, TCGETS, 0x7fffd1a119e0)        = -1 EIO (Input/output error)
+ioctl(3, SNDCTL_TMR_START or TCSETS, {c_iflag=ICRNL|IXON, c_oflag=NL0|CR0|TAB0|BS0|VT0|FF0|OPOST|ONLCR, c_cflag=B38400|CS8|CREAD, c_lflag=ISIG|ICANON|ECHO|ECHOE|ECHOK|IEXTEN|ECHOCTL|ECHOKE, ...}) = -1 EIO (Input/output error)
+write(2, "ser_close: tcsetattr restore fai"..., 56) = 56
+close(3)                                = 0
+write(2, "rig.c(1479):rig_open returning2("..., 46) = 46
+exit_group(2)                           = ?
++++ exited with 2 +++

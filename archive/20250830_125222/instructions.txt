@@ -1,0 +1,520 @@
+# truSDX-AI Driver Setup and Usage Instructions
+
+## Prerequisites
+
+Before running the truSDX-AI driver, ensure you have the following:
+
+### Hardware Requirements
+- **truSDX transceiver** (connected via USB cable)
+- **USB cable** (USB-A to micro-USB or USB-C, depending on your truSDX model)
+- **Linux system** (Ubuntu/Debian recommended)
+
+### Software Requirements
+- **Python 3.6+** (Python 3.8+ recommended)
+- **PulseAudio** (usually pre-installed on most Linux distributions)
+- **Internet connection** (for initial setup and package installation)
+
+## Installation
+
+### Step-by-Step Linux Installation Guide
+
+#### Step 1: Download the Driver
+
+1. Open a terminal window
+2. Navigate to your desired installation directory:
+   ```bash
+   cd ~/Documents
+   ```
+3. Clone or download the truSDX-AI driver package
+4. Extract if downloaded as archive:
+   ```bash
+   tar -xzf trusdx-ai-driver.tar.gz
+   cd trusdx-ai-driver
+   ```
+
+#### Step 2: Prepare the System
+
+1. Update your system packages:
+   ```bash
+   sudo apt update
+   sudo apt upgrade
+   ```
+2. Ensure Python 3 is installed:
+   ```bash
+   python3 --version
+   ```
+   If not installed:
+   ```bash
+   sudo apt install python3 python3-pip
+   ```
+
+#### Step 3: Run the Setup Script
+
+The setup script will automatically install all dependencies and configure your system:
+
+```bash
+./setup.sh
+```
+
+**Important Notes:**
+- Do NOT run the setup script as root/sudo
+- The script will prompt for sudo password when needed for system-level installations
+- If you encounter permission errors, ensure the script is executable: `chmod +x setup.sh`
+
+### What the Setup Script Does
+
+The setup script performs the following operations:
+
+1. **Installs/Updates Hamlib 4.6.3** - Required for CAT control compatibility
+2. **Installs Python dependencies** - pyaudio, pyserial, and system packages
+3. **Creates udev rules** - Ensures consistent device naming for truSDX
+4. **Sets up audio devices** - Configures ALSA Loopback card 0 devices
+5. **Configures user groups** - Adds user to dialout and audio groups
+6. **Installs time synchronization** - Chrony for accurate time (important for digital modes)
+7. **Runs smoke tests** - Verifies installation success
+
+### Step 2: Logout and Login (if prompted)
+
+If the setup script adds you to new user groups (dialout, audio), you'll need to logout and login for the changes to take effect.
+
+## Configuration
+
+### WSJT-X Configuration
+
+Configure WSJT-X with the following settings:
+
+#### Radio Tab
+- **Rig:** Kenwood TS-480
+- **Serial Port:** `/tmp/trusdx_cat`
+- **Baud Rate:** 115200
+- **Data Bits:** 8
+- **Stop Bits:** 1
+- **Parity:** None
+- **Handshake:** None
+- **PTT Method:** CAT or RTS/DTR (both work)
+- **Poll Interval:** 80ms (recommended)
+
+#### Audio Tab
+- **Input Device:** ALSA Loopback card 0 (hw:Loopback,1,0)
+- **Output Device:** ALSA Loopback card 0 (hw:Loopback,0,0)
+- **Sample Rate:** 48000 Hz
+- **Channels:** 1 (Mono)
+
+### JS8Call Configuration
+
+Configure JS8Call with the same settings as WSJT-X:
+
+#### Step-by-Step JS8Call Configuration with Screenshots
+
+##### 1. Open JS8Call Settings
+- Click on **File** → **Settings** (or press F2)
+- Navigate to the **Radio** tab
+
+##### 2. Radio Tab Configuration
+![JS8Call Radio Settings]
+- **Rig:** Select "Kenwood TS-480" from dropdown
+- **Serial Port:** Enter `/tmp/trusdx_cat`
+- **Baud Rate:** 115200
+- **Data Bits:** 8
+- **Stop Bits:** 1
+- **Parity:** None
+- **Handshake:** None
+- **PTT Method:** CAT (recommended) or RTS/DTR
+- **Poll Interval:** 80ms
+- Click **Test CAT** to verify connection
+
+##### 3. Audio Tab Configuration
+![JS8Call Audio Settings]
+- **Soundcard Input:** Select "ALSA Loopback card 0 (hw:Loopback,1,0)" from dropdown
+- **Soundcard Output:** Select "ALSA Loopback card 0 (hw:Loopback,0,0)" from dropdown
+- **Mono** checkbox: Checked
+- Click **Test PTT** to verify transmit control
+
+##### 4. Frequencies Tab
+![JS8Call Frequencies]
+- Ensure frequencies match your license privileges
+- Default JS8 frequencies should work automatically
+- The driver handles frequency changes seamlessly
+
+##### 5. Save and Restart
+- Click **OK** to save settings
+- Restart JS8Call for changes to take effect
+
+**JS8Call Specific Notes:**
+- The driver automatically handles RTS/DTR signals safely
+- If you have existing RTS/DTR settings enabled in JS8Call, they will be safely absorbed
+- Consider disabling RTS/DTR in JS8Call settings for cleaner operation (optional)
+
+## Running the Driver
+
+### Basic Usage
+
+To start the driver with default settings:
+
+```bash
+./trusdx-txrx-AI.py
+```
+
+### Command Line Options
+
+The driver supports several command-line flags:
+
+#### Essential Options
+- `-v, --verbose` - Enable verbose logging output to console
+- `--unmute` - Enable truSDX audio output (allows you to hear transmitted audio)
+- `--logfile <path>` - Override default log file location
+
+#### Advanced Options
+- `--vox` - Enable VOX audio-triggered PTT (Linux only)
+- `--direct` - Use system audio devices directly (no loopback)
+- `--no-rtsdtr` - Disable RTS/DTR-triggered PTT
+- `-B, --block-size <size>` - Set RX block size (default: 512)
+- `-T, --tx-block-size <size>` - Set TX block size (default: 48)
+- `--no-header` - Skip initial version display
+- `--no-power-monitor` - Disable power monitoring feature
+
+#### Examples
+
+Verbose mode with audio monitoring:
+```bash
+./trusdx-txrx-AI.py --verbose --unmute
+```
+
+Custom log file location:
+```bash
+./trusdx-txrx-AI.py --logfile /var/log/trusdx-custom.log
+```
+
+Direct audio mode (advanced):
+```bash
+./trusdx-txrx-AI.py --direct --verbose
+```
+
+## Viewing Logs
+
+### Log File Locations
+
+By default, logs are stored in the `logs/` directory with timestamped filenames:
+- **Default location:** `logs/trusdx-YYYYMMDD_HHMMSS.log`
+- **Custom location:** Use `--logfile` parameter to specify
+
+### Log Viewing Commands
+
+View current log file:
+```bash
+tail -f logs/trusdx-*.log
+```
+
+View specific log file:
+```bash
+less logs/trusdx-20241219_143022.log
+```
+
+Real-time log monitoring:
+```bash
+watch -n 1 'tail -20 logs/trusdx-*.log'
+```
+
+### Log Levels
+
+The driver uses different log levels:
+- **INFO** - General operational messages
+- **WARNING** - Non-critical issues
+- **ERROR** - Critical errors
+- **RECONNECT** - Connection/reconnection events
+
+## Troubleshooting FAQ
+
+### Frequently Asked Questions
+
+#### Q: Does this driver work on Windows?
+**A:** The current version (v1.2.3) focuses on Linux improvements. Windows functionality remains unchanged from v1.2.2. Windows users should continue using the previous stable release.
+
+#### Q: Why doesn't JS8Call connect to my radio?
+**A:** Common causes:
+1. Driver not running - Start the driver first, then JS8Call
+2. Wrong serial port - Ensure `/tmp/trusdx_cat` is entered exactly
+3. Wrong radio model - Must be "Kenwood TS-480"
+4. Permission issues - Check you're in the dialout group
+
+#### Q: Can I use this with other digital mode software?
+**A:** Yes! The driver works with:
+- WSJT-X (FT8, FT4, etc.)
+- JS8Call
+- Fldigi
+- VARA (Linux version)
+- Winlink (via Pat)
+- Any software supporting Kenwood TS-480 CAT control
+
+#### Q: How do I know if the driver is working?
+**A:** Check these indicators:
+1. Green "CONNECTED" message in driver output
+2. `/tmp/trusdx_cat` file exists
+3. ALSA Loopback devices visible in `aplay -l`
+4. Frequency display updates in your digital mode software
+
+#### Q: What's the time-sync watcher?
+**A:** New in v1.2.3, it monitors system time accuracy crucial for digital modes:
+- Automatically alerts if time drift exceeds 1 second
+- Ensures FT8/JS8 decode windows align properly
+- Works with chrony or systemd-timesyncd
+
+#### Q: Why does audio stop working after suspend?
+**A:** The v1.2.3 auto-reconnect feature handles this:
+- Driver detects audio device disconnection
+- ALSA Loopback devices are preserved by the kernel
+- Reconnects within 2-3 seconds after resume
+- If `hw:Loopback` does not exist, run `sudo modprobe snd-aloop` and reboot
+
+## Common Troubleshooting
+
+### Audio Issues
+
+#### Problem: No audio in WSJT-X/JS8Call
+**Solution:**
+1. Verify ALSA Loopback device exists:
+   ```bash
+   aplay -l | grep Loopback
+   ```
+2. If missing, load the ALSA loopback module:
+   ```bash
+   sudo modprobe snd-aloop
+   ```
+3. If `hw:Loopback` does not exist after loading module, reboot your system
+4. Use `alsamixer` or `pavucontrol` to verify audio routing
+
+#### Problem: Audio levels too low/high
+**Solution:**
+1. Open ALSA mixer: `alsamixer`
+2. Press F6 to select "Loopback" sound card
+3. Adjust PCM levels using arrow keys
+4. Set input level to around 50-70%
+5. Set output level to around 30-50%
+
+### USB/Serial Issues
+
+#### Problem: truSDX not detected
+**Solution:**
+1. Check USB connection and cable
+2. Verify device appears in system:
+   ```bash
+   lsusb | grep -i ftdi
+   dmesg | tail -20
+   ```
+3. Check if udev rules are applied:
+   ```bash
+   ls -la /dev/ttyTRUSDX
+   ```
+4. If symlink missing, reload udev rules:
+   ```bash
+   sudo udevadm control --reload-rules
+   sudo udevadm trigger
+   ```
+
+#### Problem: Permission denied accessing serial port
+**Solution:**
+1. Ensure user is in dialout group:
+   ```bash
+   groups | grep dialout
+   ```
+2. If not in group, add user:
+   ```bash
+   sudo usermod -a -G dialout $USER
+   ```
+3. Logout and login for changes to take effect
+
+### CAT Control Issues
+
+#### Problem: "VFO None" error in Hamlib
+**Solution:**
+1. Verify correct Hamlib version (4.6.3):
+   ```bash
+   rigctl --version
+   ```
+2. If wrong version, re-run setup script:
+   ```bash
+   ./setup.sh
+   ```
+3. Check CAT port permissions:
+   ```bash
+   ls -la /tmp/trusdx_cat
+   ```
+4. Restart the driver with verbose mode:
+   ```bash
+   ./trusdx-txrx-AI.py --verbose
+   ```
+
+#### Problem: WSJT-X can't connect to radio
+**Solution:**
+1. Ensure driver is running before starting WSJT-X/JS8Call
+2. Check if CAT port exists:
+   ```bash
+   ls -la /tmp/trusdx_cat
+   ```
+3. Verify radio model is set to "Kenwood TS-480"
+4. Check baud rate is set to 115200
+5. Restart both driver and WSJT-X/JS8Call
+
+### Connection/Reconnection Issues
+
+#### Problem: Driver keeps reconnecting
+**Solution:**
+1. Check USB cable connection
+2. Verify truSDX power and functionality
+3. Check driver logs for specific errors:
+   ```bash
+   tail -f logs/trusdx-*.log
+   ```
+4. Try different USB port
+5. Restart driver with verbose mode for debugging
+
+#### Problem: Audio dropouts during operation
+**Solution:**
+1. Check system load and CPU usage
+2. Verify no other audio applications are interfering
+3. Adjust block sizes:
+   ```bash
+   ./trusdx-txrx-AI.py -B 1024 -T 96
+   ```
+4. Check PulseAudio configuration
+
+### System Integration Issues
+
+#### Problem: Driver won't start
+**Solution:**
+1. Verify Python dependencies:
+   ```bash
+   python3 -c "import pyaudio, serial; print('Dependencies OK')"
+   ```
+2. Check file permissions:
+   ```bash
+   ls -la trusdx-txrx-AI.py
+   chmod +x trusdx-txrx-AI.py
+   ```
+3. Review setup script output for errors
+4. Try running with verbose mode for diagnostic info
+
+#### Problem: Time synchronization issues
+**Solution:**
+1. Check time synchronization service:
+   ```bash
+   systemctl status chrony
+   # or
+   systemctl status systemd-timesyncd
+   ```
+2. Verify system time is accurate:
+   ```bash
+   timedatectl status
+   ```
+3. If needed, manually sync time:
+   ```bash
+   sudo chrony sources -v
+   ```
+
+## Performance Optimization
+
+### Recommended Settings
+
+For optimal performance:
+
+1. **Audio Buffer Sizes:**
+   - RX Block Size: 512 (default)
+   - TX Block Size: 48 (default)
+   - Adjust if experiencing audio dropouts
+
+2. **WSJT-X Settings:**
+   - Poll Interval: 80ms
+   - Audio Buffer: 2048 samples
+   - Enable "Split Operation" if needed
+
+3. **System Settings:**
+   - Disable unnecessary audio applications
+   - Use dedicated USB port (avoid hubs if possible)
+   - Ensure good USB cable quality
+
+### Monitoring Performance
+
+Use verbose mode to monitor driver performance:
+```bash
+./trusdx-txrx-AI.py --verbose --unmute
+```
+
+Monitor system resources:
+```bash
+htop
+# or
+top
+```
+
+## Advanced Usage
+
+### Custom Audio Routing
+
+For advanced audio routing, use PulseAudio tools:
+
+```bash
+# List audio devices
+pactl list sinks
+pactl list sources
+
+# Route specific application audio
+arecord -D hw:Loopback,1,0 -f cd | aplay -D hw:Loopback,0,0
+```
+
+### Multiple Radio Support
+
+Each truSDX requires its own driver instance. For multiple radios:
+
+1. Create separate udev rules for each radio
+2. Run separate driver instances with different ports
+3. Configure each WSJT-X instance for its respective radio
+
+### Debugging Deep Issues
+
+For comprehensive debugging:
+
+1. Enable verbose mode
+2. Monitor system logs:
+   ```bash
+   journalctl -f
+   ```
+3. Check USB subsystem:
+   ```bash
+   dmesg | grep -i usb
+   ```
+4. Monitor audio subsystem:
+   ```bash
+   pulseaudio -vvv
+   ```
+
+## Getting Help
+
+If you encounter issues not covered in this guide:
+
+1. **Check the logs** - Enable verbose mode and review log files
+2. **Verify setup** - Re-run the setup script if needed
+3. **Review configuration** - Double-check WSJT-X/JS8Call settings
+4. **System state** - Ensure all services are running correctly
+5. **Hardware** - Test with different USB cables/ports
+
+## Version Information
+
+- **Driver Version:** 1.2.3
+- **Build Date:** 2025-01-XX
+- **Compatible Programs:** WSJT-X, JS8Call, FlDigi, Winlink, VARA, Pat
+- **Hamlib Version Required:** 4.6.3
+- **Python Version:** 3.6+ (3.8+ recommended)
+- **Platform:** Linux (Ubuntu/Debian recommended)
+- **Windows Support:** Use v1.2.2 for Windows - functionality unchanged
+
+### What's New in v1.2.3
+- CAT VFO fixes for JS8Call stability
+- Automatic audio device connection
+- Improved setup process
+- Time synchronization monitoring
+- Enhanced documentation
+- Linux-specific optimizations
+
+---
+
+*This document covers the Linux setup and troubleshooting procedures for the truSDX-AI driver v1.2.3. Windows users should refer to v1.2.2 documentation. For the most up-to-date information, refer to the project repository and release notes.*
