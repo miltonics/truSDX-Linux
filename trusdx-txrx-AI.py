@@ -5,7 +5,7 @@ TruSDX AI-Enhanced Transceiver Control Software
 Enhanced AI version with Kenwood TS-480 CAT interface and persistent serial ports
 
 Authors: SQ3SWF, PE1NNZ 2023, AI-Enhanced 2025
-Version: 1.2.4 (2025-01-13)
+Version: 1.2.5 (2025-08-25)
 
 Compatibility:
 -------------
@@ -62,7 +62,7 @@ Notes:
 
 # de SQ3SWF, PE1NNZ 2023
 # Enhanced AI version with Kenwood TS-480 CAT interface and persistent serial ports
-# Version: 1.2.4 (2025-01-13) - Python 3.12+ compatible
+# Version: 1.2.5 (2025-08-25) - Python 3.12+ compatible
 
 # Linux:
 # sudo apt install portaudio19-dev
@@ -110,6 +110,8 @@ import json
 import configparser
 import subprocess
 import atexit
+import re
+import shutil
 from sys import platform
 
 # Import required modules with helpful error messages
@@ -131,17 +133,21 @@ except ImportError:
     sys.exit(1)
 
 # Version information
-VERSION = "1.2.4"
-BUILD_DATE = "2025-01-13"
+VERSION = "1.2.5"
+BUILD_DATE = "2025-08-25"
 AUTHOR = "SQ3SWF, PE1NNZ, AI-Enhanced - Python 3.12+ Compatible"
 COMPATIBLE_PROGRAMS = ["WSJT-X", "JS8Call", "FlDigi", "Winlink"]
 MIN_PYTHON_VERSION = (3, 12)
 
 # Audio rate constants - compatible with both ALSA loopback and PipeWire backends
+# CAT streaming rates per spec (dl2man): RX 7825 Hz (U8), TX 11520 Hz (U8)
+US_RX_RATE = 7825
+US_TX_RATE = 11520
 audio_tx_rate_trusdx = 4800
-audio_tx_rate = 48000  # Use standard 48kHz for ALSA Loopback/PipeWire compatibility
-audio_rx_rate = 48000   # Use standard 48kHz for ALSA Loopback/PipeWire compatibility
-buf = []    # buffer for received audio
+# App-facing audio rates (PyAudio/ALSA/PipeWire)
+audio_tx_rate = 48000  # App → driver (TX path)
+audio_rx_rate = 48000  # Driver → app (RX path)
+buf = []    # buffer for received audio (legacy; receive path uses direct write)
 urs = [0]   # underrun counter
 status = [False, False, True, False, False, False]	# tx_state, cat_streaming_state, running, cat_active, keyed_by_rts_dtr, tx_connection_lost
 
@@ -156,24 +162,55 @@ state = {
     'last_data_time': time.time(),
     'reconnect_count': 0,
     'hardware_disconnected': False,
-    'pyaudio_instance': None  # Shared PyAudio instance
+    'pyaudio_instance': None,  # Shared PyAudio instance
+    # For header/status display
+    'audio_dev_in_name': 'trusdx_tx',   # TX audio into driver
+    'audio_dev_out_name': 'trusdx_rx',  # RX audio out of driver
+    # Simple resampler state
+'rx_rep_acc': 0.0,   # accumulation for RX upsampling
+'tx_down_acc': 0.0,   # accumulation for TX downsampling
+    'heartbeat_misses': 0,     # consecutive heartbeat failures
+    'serial_error_streak': 0,  # consecutive serial errors within window
+    'max_serial_soft_errors': 5, # threshold before reconnect
+    'last_serial_error_time': 0.0, # timestamp of last serial error
+    'last_disconnect_reason': '',  # last recorded reason for reconnect
+'last_disconnect_time': 0.0,    # timestamp of last reconnect trigger
+'last_tx_audio_time': 0.0,     # timestamp of last TX audio write or PTT ON
+    'tune_active': False,
+    'tx_us_active': False,
+    'polls_pause_until': 0.0,    # timestamp until which background polls are paused
+    'suspend_tx_audio': False,   # gate to temporarily stop TX audio writes during critical CAT ops
+    'deferred_cat': [],          # queued CAT commands to send after TX ends
+    'tx_grace_until': 0.0,       # timestamp until which safety ignores initial TX silence
+    # TX pacing buffer and controls
+    'tx_buf': bytearray(),
+    'tx_buf_lock': threading.Lock(),
+    'tx_buf_max': 34560          # default ~3x 11,520 B/s = 3 * 11520 bytes (updated at runtime from --tx-buffer-ms)
 }
 
 # Thread-safe locks for handle replacement and monitoring
 handle_lock = threading.Lock()
 monitor_lock = threading.Lock()
+# Serialize all radio writes to avoid interleaving US close with other CAT traffic
+radio_lock = threading.RLock()
 
 # Connection monitoring settings
-CONNECTION_TIMEOUT = 3.0  # Seconds without data before considering connection lost (reduced for TX)
-TX_CONNECTION_TIMEOUT = 1.5  # Faster detection for TX mode
+# Increase timeouts to avoid false positives when the radio and CAT are idle
+CONNECTION_TIMEOUT = 120.0  # Increased: seconds without data before considering connection lost (RX/idle)
+TX_CONNECTION_TIMEOUT = 5.0   # Faster detection for TX mode
 RECONNECT_DELAY = 2.0     # Give hardware time to settle
 MAX_RECONNECT_ATTEMPTS = 0 # 0 = infinite attempts (never give up)
 MAX_RETRIES = 5           # Maximum retries before exiting with error
+SOFT_ERROR_WINDOW = 10.0    # Seconds window to count transient serial errors before escalation
 
 # Power monitoring settings
 POWER_POLL_INTERVAL = 5.0  # Poll power every 5 seconds
 POWER_TIMEOUT = 2.0       # Timeout for power queries
 TX_IGNORE_PERIOD = 2.0    # Ignore 0-W detection during initial 2s of each TX
+# Safety: auto-release PTT if no TX audio seen for too long (helps JS8Call Test PTT)
+PTT_SILENCE_TIMEOUT = 1.0  # seconds (default tuned for WSJT-X end-of-tx)
+# Audio considered "silence" for safety timer if peak-to-peak <= threshold (in U8 LSBs)
+SILENCE_PP_THRESHOLD = 6
 
 # Kenwood TS-480 CAT Command mapping
 TS480_COMMANDS = {
@@ -364,7 +401,16 @@ def show_persistent_header():
     print(f"\033[1;36mtruSDX-AI Driver v{VERSION}\033[0m - \033[1;33m{BUILD_DATE}\033[0m")
     print(f"\033[1;37mConnections for WSJT-X/JS8Call:\033[0m")
     print(f"\033[1;35m  Radio:\033[0m Kenwood TS-480 | \033[1;35mPort:\033[0m {PERSISTENT_PORTS['cat_port']} | \033[1;35mBaud:\033[0m 115200 | \033[1;35mPoll:\033[0m 80ms")
-    print(f"\033[1;35m  Audio:\033[0m ALSA trusdx_tx / trusdx_rx | \033[1;35mPTT:\033[0m CAT | \033[1;35mStatus:\033[0m Ready")
+    # Use actual audio device names selected by the driver
+    audio_in_name = state.get('audio_dev_in_name', 'trusdx_tx')
+    audio_out_name = state.get('audio_dev_out_name', 'trusdx_rx')
+    if state.get('using_pulse_trusdx', False):
+        # Show Pulse API with routed TRUSDX endpoints for clarity
+        api_name = audio_in_name or 'pulse'
+        audio_str = f"{api_name} - TRUSDX / TRUSDX.monitor"
+    else:
+        audio_str = f"{audio_in_name} / {audio_out_name}"
+    print(f"\033[1;35m  Audio:\033[0m {audio_str} | \033[1;35mPTT:\033[0m CAT | \033[1;35mStatus:\033[0m Ready")
     print("\033[1;32m" + "="*80 + "\033[0m")  # Green header line
     print()
     # Set scrolling region to start after header (lines 7 onwards)
@@ -372,17 +418,114 @@ def show_persistent_header():
     print("\033[7;1H", end="")   # Move cursor to line 7
 
 def refresh_header_only(power_info=None):
-    """Refresh just the header without clearing screen
+    """Refresh just the header in place without scrolling the body.
     
     Args:
-        power_info: Dict with 'watts' and 'reconnecting' status for power display
+        power_info: Optional dict with keys 'watts' and 'reconnecting' to annotate power status.
     """
     # Save cursor position
     print("\033[s", end="")  # Save cursor position
     
-    # Move to top and redraw header with power info
-    print("\033[2J", end="")  # Clear entire screen
-    print("\033[H", end="")   # Move cursor to home position
+    # Move to top-left and redraw header lines
+    print("\033[H", end="")
+    # Top border
+    print("\033[1;32m" + "="*80 + "\033[0m")
+    # Title
+    print(f"\033[1;36mtruSDX-AI Driver v{VERSION}\033[0m - \033[1;33m{BUILD_DATE}\033[0m".ljust(80))
+    # Connections label
+    print(f"\033[1;37mConnections for WSJT-X/JS8Call:\033[0m")
+    # Status line with optional power info
+    audio_in_name = state.get('audio_dev_in_name', 'trusdx_tx')
+    audio_out_name = state.get('audio_dev_out_name', 'trusdx_rx')
+    status_line = f"\033[1;35m  Radio:\033[0m Kenwood TS-480 | \033[1;35mPort:\033[0m {PERSISTENT_PORTS['cat_port']} | \033[1;35mBaud:\033[0m 115200 | \033[1;35mPoll:\033[0m 80ms"
+    print(status_line)
+    # Audio and power line
+    if power_info and isinstance(power_info, dict):
+        if power_info.get('reconnecting', False) or power_info.get('watts', 0) == 0:
+            ptxt = f" | \033[1;33mPower: {power_info.get('watts', 0)}W (reconnecting…)\033[0m"
+        else:
+            ptxt = f" | \033[1;32mPower: {power_info.get('watts', 0)}W\033[0m"
+    else:
+        ptxt = ""
+    if state.get('using_pulse_trusdx', False):
+        api_name = audio_in_name or 'pulse'
+        audio_str = f"{api_name} - TRUSDX / TRUSDX.monitor"
+    else:
+        audio_str = f"{audio_in_name} / {audio_out_name}"
+    print(f"\033[1;35m  Audio:\033[0m {audio_str} | \033[1;35mPTT:\033[0m CAT | \033[1;35mStatus:\033[0m Ready{ptxt}")
+    # Bottom border
+    print("\033[1;32m" + "="*80 + "\033[0m")
+    print()
+    # Re-assert scroll region and return cursor to body
+    print("\033[7;24r", end="")
+    print("\033[7;1H", end="")
+    # Restore cursor position
+    print("\033[u", end="")
+
+def _u8_to_s16le_bytes(u8_bytes: bytes) -> bytes:
+    """Convert unsigned 8-bit audio (center 128) to 16-bit little-endian.
+    Simple scaling by <<8 to map -128..+127 -> -32768..+32512.
+    """
+    out = bytearray()
+    for b in u8_bytes:
+        s = (b - 128) << 8
+        out += (s & 0xFFFF).to_bytes(2, byteorder='little', signed=False)
+    return bytes(out)
+
+
+def resample_u8_to_s16_48k(u8_bytes: bytes, src_rate: int = US_RX_RATE, dst_rate: int = None) -> bytes:
+    """Naive upsampler: repeat samples to reach dst_rate, then convert to S16LE.
+    Keeps a fractional accumulator in state['rx_rep_acc'].
+    """
+    if dst_rate is None:
+        dst_rate = audio_rx_rate
+    if not u8_bytes:
+        return b''
+    ratio = float(dst_rate) / float(src_rate)
+    acc = state.get('rx_rep_acc', 0.0)
+    out = bytearray()
+    for b in u8_bytes:
+        reps_f = ratio + acc
+        reps = int(reps_f)
+        acc = reps_f - reps
+        s16 = (b - 128) << 8
+        s16le = (s16 & 0xFFFF).to_bytes(2, byteorder='little', signed=False)
+        for _ in range(reps):
+            out += s16le
+    state['rx_rep_acc'] = acc
+    return bytes(out)
+
+
+def resample_s16_to_u8_11520(s16_bytes: bytes, src_rate: int = None, dst_rate: int = US_TX_RATE) -> bytes:
+    """Naive downsampler: pick samples at dst_rate from src_rate using accumulator,
+    then convert S16 to U8 (offset-binary). """
+    if src_rate is None:
+        src_rate = audio_tx_rate
+    if not s16_bytes:
+        return b''
+    import struct
+    step = float(dst_rate) / float(src_rate)
+    acc = state.get('tx_down_acc', 0.0)
+    out = bytearray()
+    # Iterate 16-bit little-endian samples
+    for i in range(0, len(s16_bytes), 2):
+        if i + 1 >= len(s16_bytes):
+            break
+        # Little-endian signed 16-bit
+        s16 = struct.unpack_from('<h', s16_bytes, i)[0]
+        acc += step
+        if acc >= 1.0:
+            acc -= 1.0
+            # Convert to unsigned 8-bit
+            u = (s16 >> 8) + 128
+            if u < 0:
+                u = 0
+            elif u > 255:
+                u = 255
+            out.append(u)
+    state['tx_down_acc'] = acc
+    return bytes(out)
+
 
 def open_audio_streams(platform_config, config, state, retry_on_busy=True):
     """Open audio input and output streams with retry logic for device-busy errors.
@@ -409,11 +552,13 @@ def open_audio_streams(platform_config, config, state, retry_on_busy=True):
     # Get device indices
     virtual_audio_dev_out = platform_config.get('virtual_audio_dev_out')
     virtual_audio_dev_in = platform_config.get('virtual_audio_dev_in')
-    in_device_idx = find_audio_device(virtual_audio_dev_out) if virtual_audio_dev_out else -1
-    out_device_idx = find_audio_device(virtual_audio_dev_in) if virtual_audio_dev_in else -1
+    # Correct mapping: input stream reads from the app (TX path) -> virtual_audio_dev_in,
+    # output stream writes to the app (RX path) -> virtual_audio_dev_out
+    in_device_idx = find_audio_device(virtual_audio_dev_in) if virtual_audio_dev_in else -1
+    out_device_idx = find_audio_device(virtual_audio_dev_out) if virtual_audio_dev_out else -1
     
     if config.get('verbose', False):
-        print(f"\033[1;36m[AUDIO] Opening streams - Input: {virtual_audio_dev_out} (idx: {in_device_idx}), Output: {virtual_audio_dev_in} (idx: {out_device_idx})\033[0m")
+        print(f"\033[1;36m[AUDIO] Opening streams - Input: {virtual_audio_dev_in} (idx: {in_device_idx}), Output: {virtual_audio_dev_out} (idx: {out_device_idx})\033[0m")
     
     in_stream = None
     out_stream = None
@@ -430,8 +575,8 @@ def open_audio_streams(platform_config, config, state, retry_on_busy=True):
                 input=True,
                 input_device_index=in_device_idx
             )
-            log(f"[AUDIO] ✅ Successfully opened input stream from '{virtual_audio_dev_out}'")
-            print(f"\033[1;32m[AUDIO] ✅ Input stream opened successfully\033[0m")
+            log(f"[AUDIO] ✅ Successfully opened input stream from '{virtual_audio_dev_in}'")
+            print(f"\033[1;32m[AUDIO] ✅ Input stream opened successfully ({virtual_audio_dev_in})\033[0m")
             break
         except OSError as e:
             error_code = getattr(e, 'errno', None) or (e.args[0] if e.args else None)
@@ -474,8 +619,8 @@ def open_audio_streams(platform_config, config, state, retry_on_busy=True):
                 output=True,
                 output_device_index=out_device_idx
             )
-            log(f"[AUDIO] ✅ Successfully opened output stream to '{virtual_audio_dev_in}'")
-            print(f"\033[1;32m[AUDIO] ✅ Output stream opened successfully\033[0m")
+            log(f"[AUDIO] ✅ Successfully opened output stream to '{virtual_audio_dev_out}'")
+            print(f"\033[1;32m[AUDIO] ✅ Output stream opened successfully ({virtual_audio_dev_out})\033[0m")
             break
         except OSError as e:
             error_code = getattr(e, 'errno', None) or (e.args[0] if e.args else None)
@@ -517,6 +662,13 @@ def open_audio_streams(platform_config, config, state, retry_on_busy=True):
         log("[AUDIO] No audio streams available, driver will continue without audio", "WARNING")
         print(f"\033[1;33m[AUDIO] ⚠️ No audio streams available - driver running in CAT-only mode\033[0m")
     
+    # If using PulseAudio (pulse device) and TRUSDX sink exists, try to route streams automatically
+    try:
+        if state.get('using_pulse_trusdx'):
+            _route_streams_to_trusdx_async()
+    except Exception as _route_err:
+        log(f"[AUDIO] Routing helper error: {_route_err}", "WARNING")
+
     return in_stream, out_stream
     print("\033[1;32m" + "="*80 + "\033[0m")  # Green header line
     print(f"\033[1;36mtruSDX-AI Driver v{VERSION}\033[0m - \033[1;33m{BUILD_DATE}\033[0m")
@@ -630,6 +782,12 @@ def query_radio(cmd, retries=3, timeout=0.2, ser_handle=None):
     Returns:
         bytes: Response from radio or None if failed
     """
+    # Respect temporary poll pause window
+    if polls_paused():
+        return None
+    # Never run background queries during TX to avoid breaking US stream
+    if status[0]:
+        return None
     # Use provided handle or get from state
     ser = ser_handle or state.get('ser')
     if not ser:
@@ -698,7 +856,7 @@ radio_state = {
 def handle_ts480_command(cmd, ser):
     """Handle Kenwood TS-480 specific CAT commands with full emulation"""
     try:
-        cmd_str = cmd.decode('utf-8').strip(';\r\n')
+        cmd_str = cmd.decode('ascii', errors='ignore').strip(';\r\n')
         log(f"Processing CAT command: {cmd_str}")
         
         # Empty command - ignore
@@ -815,28 +973,17 @@ def handle_ts480_command(cmd, ser):
                 freq = cmd_str[2:13].ljust(11, '0')[:11]  # Ensure exactly 11 digits
                 freq_mhz = float(freq) / 1000000.0
                 
-                print(f"\033[1;36m[DEBUG] JS8Call setting frequency: {freq} ({freq_mhz:.3f} MHz)\033[0m")
+                print(f"\033[1;36m[DEBUG] JS8Call/Hamlib setting frequency: {freq} ({freq_mhz:.3f} MHz)\033[0m")
                 
-                # Only block the default 14.074 MHz when JS8Call first connects
-                # Allow all other frequency changes
-                if freq == '00014074000' and radio_state['vfo_a_freq'] != '00014074000':
-                    print(f"\033[1;33m[CAT] Blocking JS8Call's default 14.074 MHz - keeping current frequency\033[0m")
-                    # Return current frequency instead of accepting the default
-                    current_freq = radio_state['vfo_a_freq'].ljust(11, '0')[:11]
-                    current_mhz = float(current_freq) / 1000000.0
-                    print(f"\033[1;32m[CAT] \u2705 Returning current frequency: {current_mhz:.3f} MHz\033[0m")
-                    return f'FA{current_freq};'.encode('utf-8')
-                else:
-                    # Allow legitimate frequency changes
-                    radio_state['curr_vfo'] = 'A'
-                    print(f"\033[1;32m[CAT] \u2705 Allowing frequency change to {freq_mhz:.3f} MHz\033[0m")
-                    radio_state['vfo_a_freq'] = freq
-                    refresh_header_only()
-                    # ACK with semicolon for FA setter
-                    return b';'
+                # Accept change, update state, and forward to hardware for actual tune
+                radio_state['curr_vfo'] = 'A'
+                radio_state['vfo_a_freq'] = freq
+                refresh_header_only()
+                # Return None so handle_cat forwards the original FAXXXX; to the radio
+                return None
             else:
                 # Read VFO A frequency - return current state
-                print(f"\033[1;36m[DEBUG] JS8Call requesting frequency\033[0m")
+                print(f"\033[1;36m[DEBUG] JS8Call/Hamlib requesting frequency\033[0m")
                 freq = radio_state['vfo_a_freq'].ljust(11, '0')[:11]
                 freq_mhz = float(freq) / 1000000.0
                 print(f"\033[1;32m[CAT] ✅ Returning frequency: {freq_mhz:.3f} MHz\033[0m")
@@ -848,8 +995,8 @@ def handle_ts480_command(cmd, ser):
                 freq = cmd_str[2:13].ljust(11, '0')[:11]  # Ensure exactly 11 digits
                 radio_state['vfo_b_freq'] = freq
                 radio_state['curr_vfo'] = 'B'
-                # ACK with semicolon for FB setter
-                return b';'
+                # Forward to hardware so VFO B actually tunes
+                return None
             else:
                 # Read VFO B frequency
                 freq = radio_state['vfo_b_freq'].ljust(11, '0')[:11]
@@ -959,20 +1106,99 @@ def handle_ts480_command(cmd, ser):
             else:
                 return b'SQ0000;'  # Squelch 0
         
-        # PTT operations - must forward to truSDX hardware
+        # PTT operations - translate Kenwood TX1/TX0 to truSDX TX0/RX locally
         elif cmd_str == 'TX':
-            # Query TX status - TX0 = in TX mode, TX1 = in RX mode
-            return b'TX0;' if status[0] else b'TX1;'
+            # Toggle PTT: if OFF -> ON via TX0; if already ON -> OFF via RX
+            try:
+                if not status[0]:
+                    # Ensure CAT-audio path is enabled and speaker state applied
+                    if not state.get('cat_audio_enabled', False):
+                        enable_cat_audio(ser)
+                        state['cat_audio_enabled'] = True
+                    # Enter TX mode (truSDX: TX0 enters TX)
+                    send_cat(b';TX0;', ser)
+                    status[0] = True
+                    state['last_tx_audio_time'] = time.time()
+                    pause_polls(1.2)  # allow audio path to spin up without background polls
+                    state['tx_grace_until'] = time.time() + config.get('tx_start_grace', 1.8)
+                    log('[PTT] Client TX; -> radio TX0; PTT ON (toggle)')
+                    _remind_tx_buffer("PTT ON")
+                else:
+                    # Already transmitting: treat TX; as OFF (toggle)
+                    close_us_then_rx(ser, reason='TX toggle off')
+                    log('[PTT] Client TX; while TX -> radio RX; PTT OFF (toggle)')
+                # Kenwood set-commands typically do not return data; send simple ACK
+                return b';'
+            except Exception as e:
+                log(f"[PTT] Error handling TX toggle;: {e}", 'ERROR')
+                # Still return an ACK to keep CAT client happy
+                return b';'
+        elif cmd_str == 'TX1':
+            # PTT ON requested by client; translate to truSDX TX0 (enter TX)
+            try:
+                send_cat(b';TX0;', ser)  # truSDX: TX0 enters TX
+                status[0] = True
+                state['last_tx_audio_time'] = time.time()  # start safety timer
+                pause_polls(1.2)  # allow audio path to spin up without background polls
+                state['tx_grace_until'] = time.time() + config.get('tx_start_grace', 1.8)
+                log('[PTT] Translated client TX1 -> radio TX0; PTT ON')
+                _remind_tx_buffer("PTT ON")
+                if config.get('verbose', False):
+                    log(f"[SAFETY] Timer started (PTT ON). Timeout={PTT_SILENCE_TIMEOUT}s")
+            except Exception as e:
+                log(f'[PTT] Error translating TX1->TX0: {e}', 'ERROR')
+            # Do not echo anything for TX1 set-command (Kenwood set-commands typically no reply)
+            return None
+        elif cmd_str == 'TX0':
+            # PTT OFF requested by client; translate to truSDX RX (exit TX)
+            try:
+                # Atomically close US and exit TX
+                close_us_then_rx(ser, reason='TX0 command')
+                log('[PTT] Translated client TX0 -> radio RX; PTT OFF')
+                if config.get('verbose', False):
+                    log("[SAFETY] Timer stopped (PTT OFF)")
+            except Exception as e:
+                log(f'[PTT] Error translating TX0->RX: {e}', 'ERROR')
+            # Do not echo anything for TX0 set-command
+            return None
+        elif cmd_str == 'TX2':
+            # Treat TX2; as a toggle: first press = Tune ON, second press = Tune OFF
+            try:
+                if status[0] and state.get('tune_active', False):
+                    # Tune OFF: forward TX2; to radio to stop tuner tone, then atomically force RX;
+                    try:
+                        send_cat(b';TX2;', ser)
+                        log('[TUNE] Forwarded TX2; to radio to stop tune')
+                    except Exception as _fwd_err:
+                        log(f"[TUNE] Error forwarding TX2 OFF to radio: {_fwd_err}", 'WARNING')
+                    # Now close US and force RX; with robust reassert
+                    close_us_then_rx(ser, reason='tune off')
+                    log('[TUNE] Client TX2; while tune active -> RX; (tune OFF)')
+                    # Acknowledge to CAT client
+                    return b';'
+                else:
+                    # Tune ON: do NOT alter CAT-audio state here (guard) to avoid side-effects at tune start
+                    if not state.get('cat_audio_enabled', False):
+                        log('[TUNE] Guard active: skipping CAT-audio enable on TX2 ON', 'DEBUG')
+                    status[0] = True
+                    state['tune_active'] = True
+                    state['last_tx_audio_time'] = time.time()
+                    pause_polls(1.2)  # allow tune start without background polls
+                    state['tx_grace_until'] = time.time() + config.get('tx_start_grace', 1.8)
+                    log('[TUNE] Client TX2; -> radio TX2; PTT ON (tune)')
+                    _remind_tx_buffer("TUNE ON")
+                    # Forward TX2; to radio unchanged
+                    return None
+            except Exception as e:
+                log(f'[TUNE] Error handling TX2 toggle: {e}', 'ERROR')
+                # Fallback: forward to radio
+                return None
         elif cmd_str.startswith('TX'):
-            # TX command with mode (TX1 = enter TX mode, TX0 = exit TX mode)
-            if cmd_str == 'TX1' and not status[0]:
-                # Starting transmission - need to unmute speaker first
-                print("\033[1;33m[TX] Transmit mode\033[0m")
-                # Return None to let main handler send UA1 before TX1
-            return None  # Forward to truSDX hardware
+            # Forward other TX variants unchanged
+            return None
         elif cmd_str == 'RX':
-            # Set to receive mode
-            return None  # Forward to truSDX hardware
+            # Forward explicit RX commands to radio unchanged
+            return None
             
         # Filter and other commands
         elif cmd_str.startswith('FL') or cmd_str.startswith('IS') or cmd_str.startswith('NB') or cmd_str.startswith('NR'):
@@ -1018,6 +1244,49 @@ def handle_ts480_command(cmd, ser):
         log(f"Error processing CAT command {cmd}: {e}")
         return None  # Don't send error responses
 
+def _route_streams_to_trusdx_async():
+    """Spawn a background thread that moves our PulseAudio streams to TRUSDX/monitor.
+    Requires pactl and is best-effort.
+    """
+    def worker():
+        if not shutil.which('pactl'):
+            return
+        pid = str(os.getpid())
+        deadline = time.time() + 10.0  # try up to 10 seconds
+        moved_play = False
+        moved_rec = False
+        while time.time() < deadline and (not moved_play or not moved_rec):
+            try:
+                # Move playback (sink-input) to TRUSDX
+                if not moved_play:
+                    si = subprocess.run(['pactl', 'list', 'sink-inputs'], capture_output=True, text=True).stdout
+                    # Find blocks "Sink Input #<id>" that contain application.process.id = "<pid>"
+                    for block in re.split(r"\n(?=Sink Input #)", si):
+                        if f"application.process.id = \"{pid}\"" in block:
+                            m = re.search(r"Sink Input #(\d+)", block)
+                            if m:
+                                sid = m.group(1)
+                                subprocess.run(['pactl', 'move-sink-input', sid, 'TRUSDX'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                moved_play = True
+                                break
+                # Move recording (source-output) to TRUSDX.monitor
+                if not moved_rec:
+                    so = subprocess.run(['pactl', 'list', 'source-outputs'], capture_output=True, text=True).stdout
+                    for block in re.split(r"\n(?=Source Output #)", so):
+                        if f"application.process.id = \"{pid}\"" in block:
+                            m = re.search(r"Source Output #(\d+)", block)
+                            if m:
+                                oid = m.group(1)
+                                subprocess.run(['pactl', 'move-source-output', oid, 'TRUSDX.monitor'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                moved_rec = True
+                                break
+            except Exception:
+                pass
+            time.sleep(0.5)
+        if moved_play or moved_rec:
+            log(f"[AUDIO] Routed streams via Pulse: playback={moved_play}, record={moved_rec}")
+    threading.Thread(target=worker, daemon=True).start()
+
 def show_audio_devices():
     # Use shared PyAudio instance or create temporary one
     p = state.get('pyaudio_instance')
@@ -1055,7 +1324,7 @@ def find_audio_device(name, occurance = 0):
     
     # Special case for TRUSDX devices - map to correct Loopback hw devices
     # Support both naming conventions (Option #1 preferred, Option #2 legacy)
-    if name in ["TRUSDX", "TRUSDX_monitor", "trusdx_tx", "trusdx_rx"]:
+    if name in ["trusdx_tx", "trusdx_rx"]:
         try:
             p = state.get('pyaudio_instance')
             temp_instance = False
@@ -1063,15 +1332,10 @@ def find_audio_device(name, occurance = 0):
                 p = pyaudio.PyAudio()
                 temp_instance = True
             
-            # Map device names to Loopback hw device patterns
-            # Driver perspective:
-            # TRUSDX / trusdx_tx: Driver reads TX audio from hw:1,0 (JS8Call writes to hw:1,0)
-            # TRUSDX.monitor / trusdx_rx: Driver writes RX audio to hw:1,1 (JS8Call reads from hw:1,1)
+            # Map ALSA PCM names to Loopback hw device patterns (legacy ALSA path)
             device_map = {
-                "TRUSDX": "1,0",           # Option #1 (preferred) - TX audio input
-                "TRUSDX_monitor": "1,1",   # Option #1 (preferred) - RX audio output
-                "trusdx_tx": "1,0",        # Option #2 (legacy) - TX audio input
-                "trusdx_rx": "1,1"         # Option #2 (legacy) - RX audio output
+                "trusdx_tx": "1,0",        # TX audio input
+                "trusdx_rx": "1,1"         # RX audio output
             }
             
             hw_pattern = device_map[name]
@@ -1115,6 +1379,14 @@ def find_audio_device(name, occurance = 0):
         for i in range(p.get_device_count()):
             device_info = p.get_device_info_by_index(i)
             device_name = device_info['name']
+            # Handle common PipeWire/Pulse alias for the monitor
+            if name == "TRUSDX.monitor":
+                if ("monitor of trusdx" in device_name.lower()) or ("trusdx_monitor" in device_name.lower()):
+                    result.append(i)
+                    log(f"[ALSA-AUDIT] Found PipeWire monitor alias for TRUSDX: {device_name} (index {i})")
+                    if config.get('verbose', False):
+                        print(f"\033[1;32m[AUDIO] PipeWire monitor alias match: {device_name} (index: {i})\033[0m")
+                    continue
             
             # Debug logging in verbose mode
             if config.get('verbose', False):
@@ -1233,14 +1505,51 @@ def find_serial_device(name, occurance = 0):
     result = [port.device for port in serial.tools.list_ports.comports() if name in port.description]
     return result[occurance] if len(result) else "" # return n-th matching device to name, "" for no match
 
+def _is_valid_cat_frame(frame: bytes) -> bool:
+    """Heuristic: accept only printable ASCII CAT frames ending with ';' and starting with an uppercase letter.
+    Allows single-letter queries like 'V;' and typical two-letter replies like 'MD2;', 'FA000...;'.
+    """
+    try:
+        if not frame or not frame.endswith(b';'):
+            return False
+        # Quick ASCII check (printable range)
+        for b in frame:
+            if b < 32 or b > 126:
+                return False
+        # First char must be A-Z
+        if not (65 <= frame[0] <= 90):
+            return False
+        # Second char may be ';' (e.g., 'V;') or A-Z or 0-9
+        if len(frame) >= 2:
+            b1 = frame[1]
+            if not (b1 == 59 or 65 <= b1 <= 90 or 48 <= b1 <= 57):
+                return False
+        return True
+    except Exception:
+        return False
+
 def handle_rx_audio(ser, cat, pastream, d):
     if status[1]:
-        #log(f"stream: {d}")
-        if not status[0]: buf.append(d)                   # in CAT streaming mode: fwd to audio buf
-        #if not status[0]: pastream.write(d)  #  in CAT streaming mode: directly fwd to audio
-        if d[-1] == ord(';'):
-            status[1] = False           # go to CAT cmd mode when data ends with ';'
-            #log("***CAT mode")
+        # CAT streaming US payload (U8) → convert to S16LE at app rate
+        payload = d
+        # Strip US header if present
+        if payload.startswith(b'US'):
+            payload = payload[2:]
+        # Remove trailing CAT delimiter if present
+        end_stream = False
+        if payload.endswith(b';'):
+            payload = payload[:-1]
+            end_stream = True
+        if not status[0] and pastream and payload:
+            try:
+                s16 = resample_u8_to_s16_48k(payload)
+                if s16:
+                    pastream.write(s16)
+            except Exception as e:
+                log(f"RX audio write error: {e}")
+        # End of streaming when ';' encountered
+        if end_stream:
+            status[1] = False
     else:
         if d.startswith(b'US'):
             #log("***US mode")
@@ -1248,20 +1557,31 @@ def handle_rx_audio(ser, cat, pastream, d):
         else:
             if status[3]:               # only send something to cat port, when active
                 try:
-                    # Synchronize radio response transmission with same protection as emulated responses
-                    cat.reset_output_buffer()
-                    time.sleep(0.001)  # Brief pause to ensure buffer is actually clear
-                    cat.write(d)
-                    cat.flush()
-                    
-                    if config.get('verbose', False):
-                        print(f"\033[1;35m[RADIO] Forwarded radio response: {d}\033[0m")
-                        
+                    # Filter UA/US and error echoes from radio to avoid confusing CAT clients (e.g., Hamlib/JS8Call)
+                    if d.startswith((b'UA0', b'UA1', b'UA2', b'UA')) or d.startswith(b'US') or d in (b'E;', b'?;'):
+                        log(f"[FILTER] Suppressed radio echo to CAT client: {d}")
+                    else:
+                        # During TX, do not forward any radio-originated bytes to CAT; we emulate responses locally
+                        if status[0]:
+                            log(f"[FILTER] Suppressed radio response during TX: {d}")
+                        else:
+                            # Validate CAT frame shape to avoid leaking audio or binary to CAT
+                            if not _is_valid_cat_frame(d):
+                                log(f"[FILTER] Dropped non-CAT frame from radio: len={len(d)}")
+                            else:
+                                # Synchronize radio response transmission with same protection as emulated responses
+                                cat.reset_output_buffer()
+                                time.sleep(0.001)  # Brief pause to ensure buffer is actually clear
+                                cat.write(d)
+                                cat.flush()
+                                
+                                if config.get('verbose', False):
+                                    print(f"\033[1;35m[RADIO] Forwarded radio response: {d}\033[0m")
+                                
+                                log(f"O: {d}")  # in CAT command mode
                 except Exception as cat_error:
                     log(f"CAT radio response write error: {cat_error}")
                     print(f"\033[1;31m[CAT ERROR] Failed to forward radio response: {cat_error}\033[0m")
-                    
-                log(f"O: {d}")  # in CAT command mode
             else:
                 log("Skip CAT response, as CAT is not active.")
 
@@ -1285,35 +1605,68 @@ def receive_serial_audio(ser, cat, pastream):
                     time.sleep(0.001)   #normal case for RX
                     continue  # Skip the rest of the loop when no data is waiting
                 else:
-                    #d = bbuf + ser.read(config['tx_block_size'])
                     d = bbuf + ser.read(ser.in_waiting)
+                    # If not in streaming mode, detect US header anywhere and split
+                    if not status[1] and b'US' in d:
+                        idx = d.find(b'US')
+                        pre = d[:idx]
+                        stream_part = d[idx:]
+                        # First, handle any preamble normally (may contain CAT responses ending with ';')
+                        if pre:
+                            x_pre = pre.split(b';', maxsplit=1)
+                            if len(x_pre) == 2:
+                                handle_rx_audio(ser, cat, pastream, x_pre[0] + b';')
+                                bbuf = x_pre[1]
+                            else:
+                                # No complete delimiter in pre; buffer it and continue
+                                bbuf = x_pre[0]
+                                continue
+                        # Now enter streaming mode and handle the US part
+                        status[1] = True
+                        x_stream = stream_part.split(b';', maxsplit=1)
+                        cat_delim = (len(x_stream) == 2)
+                        bbuf = x_stream[1] if cat_delim else b''
+                        d_proc = x_stream[0] + (b';' if cat_delim else b'')
+                        handle_rx_audio(ser, cat, pastream, d_proc)
+                        continue
+                    # Regular processing
                     x = d.split(b';', maxsplit=1)
                     cat_delim = (len(x) == 2)
                     bbuf = x[1] if cat_delim else b''
                     if not cat_delim and len(x[0]) < config['tx_block_size']:
                         bbuf = x[0]
                         continue
-                    d = x[0] + b';' if cat_delim else x[0]
+                    d = x[0] + (b';' if cat_delim else b'')
                     handle_rx_audio(ser, cat, pastream, d)
                 # Update data timestamp for connection monitoring
                 update_data_timestamp()
             except (serial.serialutil.SerialException, OSError) as e:
                 error_msg = str(e)
-                log(f"Serial disconnection detected: {error_msg}")
-                print(f"\033[1;33m[SERIAL] 🔌 Hardware disconnected: {error_msg}\033[0m")
-                
-                # Set hardware disconnection flag
-                state['hardware_disconnected'] = True
-                state['connection_stable'] = False
-                
-                # Trigger immediate reconnection if not already in progress
-                if not state.get('reconnecting', False):
-                    print(f"\033[1;31m[SERIAL] 🔄 Triggering immediate reconnection due to hardware disconnect...\033[0m")
-                    threading.Thread(target=safe_reconnect, daemon=True).start()
-                
-                # Stop this thread
-                status[2] = False
-                break
+                log(f"Serial error in RX thread: {error_msg}", "WARNING")
+                now = time.time()
+                # Decay streak if last error was long ago
+                if now - state.get('last_serial_error_time', 0) > SOFT_ERROR_WINDOW:
+                    state['serial_error_streak'] = 0
+                state['serial_error_streak'] += 1
+                state['last_serial_error_time'] = now
+                streak = state['serial_error_streak']
+                limit = state.get('max_serial_soft_errors', 5)
+
+                if _is_transient_serial_error(e) and streak <= limit:
+                    print(f"\033[1;33m[SERIAL] ⚠️ Transient RX serial error (streak {streak}/{limit}): {error_msg} — retrying...\033[0m")
+                    time.sleep(min(0.5, 0.1 * streak + 0.1))
+                    continue
+                else:
+                    print(f"\033[1;31m[SERIAL] 🔌 RX serial error threshold reached ({streak}/{limit}) — reconnecting\033[0m")
+                    # Escalate to reconnection
+                    state['hardware_disconnected'] = True
+                    state['connection_stable'] = False
+                    state['serial_error_streak'] = 0  # reset streak on escalation
+
+                    if not state.get('reconnecting', False):
+                        threading.Thread(target=safe_reconnect, kwargs={'reason':'serial_error_rx', 'details': error_msg}, daemon=True).start()
+                    # Exit thread; reconnection will spawn a new one
+                    break
             except Exception as e:
                 log(f"Unexpected error in receive_serial_audio: {e}")
                 time.sleep(0.1)  # Brief pause before continuing
@@ -1321,23 +1674,29 @@ def receive_serial_audio(ser, cat, pastream):
                 
     except Exception as e:
         log(f"Fatal error in receive_serial_audio: {e}")
-        status[2] = False
-        if config['verbose']: raise
+        # Do not signal global shutdown; allow reconnection logic to handle it
+        if config['verbose']:
+            raise
 
 def play_receive_audio(pastream):
     try:
         log("play_receive_audio")
+        # If no output stream is available, exit the thread gracefully
+        if pastream is None:
+            log("RX audio stream not available - play_receive_audio exiting", "WARNING")
+            return
         while status[2]:
             if len(buf) < 2:
                 #log(f"UNDERRUN #{urs[0]} - refilling")
                 urs[0] += 1
                 while len(buf) < 10:
                     time.sleep(0.001)
-            if not status[0]: pastream.write(buf[0])
+            if not status[0] and pastream:
+                pastream.write(buf[0])
             buf.remove(buf[0])
     except Exception as e:
         log(e)
-        status[2] = False
+        # Do not request global shutdown from audio playback thread
         if config['verbose']: raise
 
 def tx_cat_delay(ser):
@@ -1347,8 +1706,136 @@ def tx_cat_delay(ser):
     #time.sleep(0.0005 + 32/audio_tx_rate_trusdx) # and wait until trusdx buffers are read
     time.sleep(0.010) # and wait a bit before interrupting TX stream for a CAT cmd
 
+def polls_paused() -> bool:
+    try:
+        return time.time() < state.get('polls_pause_until', 0.0)
+    except Exception:
+        return False
+
+
+def pause_polls(duration: float = 0.35):
+    try:
+        state['polls_pause_until'] = max(state.get('polls_pause_until', 0.0), time.time() + max(0.0, duration))
+    except Exception:
+        pass
+
+
+def radio_write(ser, data: bytes):
+    if not ser:
+        return
+    with radio_lock:
+        ser.write(data)
+        ser.flush()
+
+
+def close_us_if_active(ser, reason: str = ""):
+    """Close an active US TX stream only once, under lock, updating state flags."""
+    if not ser:
+        return
+    with radio_lock:
+        if state.get('tx_us_active', False):
+            try:
+                ser.write(b';')
+                ser.flush()
+                state['tx_us_active'] = False
+                if reason:
+                    log(f"[US] Closed US frame ({reason})")
+                else:
+                    log("[US] Closed US frame")
+            except Exception as e:
+                log(f"[US] Error closing US frame: {e}", 'ERROR')
+
+
+def close_us_then_rx(ser, reason: str = ""):
+    """Atomically close US (if active), issue RX;, and apply CAT-audio post-TX handling.
+    Pauses background polls briefly to prevent 'E;' floods while the radio settles.
+    """
+    if not ser:
+        return
+    # Pause polls briefly during critical closeout and suspend TX audio writes
+    pause_polls(0.8)
+    state['suspend_tx_audio'] = True
+    with radio_lock:
+        # Mark TX off immediately to prevent the TX loop from re-opening US during this window
+        status[0] = False
+        # Close US if needed
+        if state.get('tx_us_active', False):
+            try:
+                ser.write(b';')
+                ser.flush()
+                state['tx_us_active'] = False
+                if reason:
+                    log(f"[US] Closed US frame prior to RX ({reason})")
+                else:
+                    log("[US] Closed US frame prior to RX")
+            except Exception as e:
+                log(f"[US] Error closing before RX: {e}", 'ERROR')
+        # Force RX
+        try:
+            # Use send_cat under lock (re-entrant)
+            ser.flush()
+            time.sleep(0.003)
+            ser.write(b';RX;')
+            ser.flush()
+            time.sleep(0.010)
+        except Exception as e:
+            log(f"[RX] Error sending RX;: {e}", 'ERROR')
+        # Optionally reassert RX; a few times to avoid stuck TX on NAKs/missed frames
+        try:
+            _robust_reassert_rx(ser)
+        except Exception as e:
+            log(f"[RX] Robust reassert error: {e}", 'WARNING')
+    # Keep CAT audio stream active and mute/unmute speaker per config
+    try:
+        disable_cat_audio(ser)
+    except Exception as e:
+        log(f"[RX] Post-RX audio handling error: {e}", 'WARNING')
+    finally:
+        # Re-enable TX audio writes
+        state['suspend_tx_audio'] = False
+    # Post-release guard window (extra RX; nudges)
+    try:
+        _schedule_post_release_guard(ser)
+    except Exception as _guard_err:
+        log(f"[PTT-GUARD] Error scheduling guard: {_guard_err}", 'WARNING')
+    # Update local flags
+    status[0] = False
+    state['tune_active'] = False
+    state['last_tx_audio_time'] = 0.0
+
+    # After TX ends, flush any deferred CAT commands
+    try:
+        flush_deferred_cat(ser)
+    except Exception as _defer_err:
+        log(f"[DEFER] Error flushing deferred CAT: {_defer_err}", 'WARNING')
+
+def flush_deferred_cat(ser, inter_cmd_delay: float = 0.010):
+    """Send any CAT commands that were deferred during TX, preserving order."""
+    try:
+        if not ser:
+            return
+        q = state.get('deferred_cat', [])
+        if not q:
+            return
+        # Move out the queue atomically
+        cmds = q[:]
+        state['deferred_cat'] = []
+        log(f"[DEFER] Flushing {len(cmds)} deferred CAT commands after TX")
+        for c in cmds:
+            try:
+                with radio_lock:
+                    ser.write(c)
+                    ser.flush()
+                time.sleep(inter_cmd_delay)
+                log(f"[DEFER→RADIO] {c}")
+            except Exception as _e:
+                log(f"[DEFER] Failed to send deferred CAT {c}: {_e}", 'WARNING')
+    except Exception as e:
+        log(f"[DEFER] Flush error: {e}", 'ERROR')
+
+
 def send_cat(cmd, ser, pre_delay=0.003, post_delay=0.010):
-    """Send CAT command with proper timing and buffer management.
+    """Send CAT command with proper timing and buffer management, serialized by radio_lock.
     
     Args:
         cmd: The command bytes to send
@@ -1356,42 +1843,210 @@ def send_cat(cmd, ser, pre_delay=0.003, post_delay=0.010):
         pre_delay: Delay before sending command (default 0.003s)
         post_delay: Delay after sending command (default 0.010s)
     """
-    ser.flush()
-    time.sleep(pre_delay)
-    ser.write(cmd)
-    ser.flush()
-    time.sleep(post_delay)
+    if not ser:
+        return
+    with radio_lock:
+        ser.flush()
+        time.sleep(pre_delay)
+        ser.write(cmd)
+        ser.flush()
+        time.sleep(post_delay)
+
+
+def _robust_reassert_rx(ser):
+    """Optionally reassert RX; a few times after PTT-OFF to avoid stuck TX.
+    Safe to run even if the rig already exited TX; extra RX; are idempotent.
+    Controlled by:
+      - config['robust_ptt_off'] (bool)
+      - config['robust_ptt_off_attempts'] (int)
+      - config['robust_ptt_off_interval_ms'] (int)
+    """
+    try:
+        if not ser:
+            return
+        # Default to enabled unless explicitly disabled
+        if not config.get('robust_ptt_off', True):
+            return
+        attempts = int(config.get('robust_ptt_off_attempts', 2))
+        interval_ms = int(config.get('robust_ptt_off_interval_ms', 60))
+        if attempts <= 0:
+            return
+        for i in range(attempts):
+            # Reassert RX; using the same protected writer
+            send_cat(b';RX;', ser, pre_delay=0.002, post_delay=0.008)
+            # Short spacing between attempts
+            time.sleep(max(0.0, interval_ms) / 1000.0)
+        log(f"[ROBUST-PTT] Reasserted RX; x{attempts} after PTT OFF")
+    except Exception as e:
+        log(f"[ROBUST-PTT] Error during RX reassert: {e}", 'WARNING')
+
+def _schedule_post_release_guard(ser):
+    """After PTT release, schedule a short guard window that keeps nudging RX;.
+    This mitigates radios that intermittently NAK the first few RX; after TX.
+    Controlled by:
+      - config['ptt_release_guard_ms'] (total duration, default 500ms)
+      - config['ptt_release_guard_interval_ms'] (spacing, default 120ms)
+    """
+    try:
+        if not ser:
+            return
+        total_ms = int(config.get('ptt_release_guard_ms', 500))
+        interval_ms = int(config.get('ptt_release_guard_interval_ms', 120))
+        if total_ms <= 0 or interval_ms <= 0:
+            return
+        def worker():
+            deadline = time.time() + (total_ms / 1000.0)
+            while time.time() < deadline:
+                # Abort if a new TX begins
+                if status[0]:
+                    break
+                try:
+                    send_cat(b';RX;', ser, pre_delay=0.002, post_delay=0.006)
+                except Exception as _e:
+                    log(f"[PTT-GUARD] RX nudge error: {_e}", 'WARNING')
+                time.sleep(interval_ms / 1000.0)
+            log(f"[PTT-GUARD] Completed guard window ({total_ms}ms, step {interval_ms}ms)")
+        threading.Thread(target=worker, daemon=True).start()
+    except Exception as e:
+        log(f"[PTT-GUARD] Schedule error: {e}", 'WARNING')
+
+def init_tx_buffer(max_bytes: int = None):
+    try:
+        if max_bytes is None:
+            max_bytes = state.get('tx_buf_max', 34560)
+        else:
+            # Persist chosen cap
+            state['tx_buf_max'] = int(max_bytes)
+        with state['tx_buf_lock']:
+            state['tx_buf'] = bytearray()
+            state['tx_buf_max'] = int(max_bytes)
+            state['tx_overflows'] = 0
+            state['tx_underruns'] = 0
+    except Exception:
+        pass
+
+def tx_buffer_write(u8_bytes: bytes):
+    """Append U8 audio to the TX buffer, replacing ';' with ':' to protect US stream.
+    If buffer would overflow, drop the newest excess bytes (preserve continuity).
+    """
+    if not u8_bytes:
+        return
+    data = u8_bytes.replace(b'\x3b', b'\x3a')
+    with state['tx_buf_lock']:
+        buf = state['tx_buf']
+        cap = state.get('tx_buf_max', 34560)
+        free = cap - len(buf)
+        if len(data) <= free:
+            buf.extend(data)
+        else:
+            if free > 0:
+                buf.extend(data[:free])
+            drop = len(data) - free
+            state['tx_overflows'] = state.get('tx_overflows', 0) + 1
+            # overflow drop; keep most recent data discarded to maintain timeline
+            # (alternative would be dropping oldest, but that causes large latency build-up)
+
+
+def tx_buffer_read(n: int) -> bytes:
+    """Read up to n bytes from the TX buffer. Returns fewer if insufficient."""
+    if n <= 0:
+        return b''
+    with state['tx_buf_lock']:
+        buf = state['tx_buf']
+        if not buf:
+            return b''
+        take = min(n, len(buf))
+        out = bytes(buf[:take])
+        del buf[:take]
+        return out
+
+def _is_transient_serial_error(err: Exception) -> bool:
+    """Heuristic check for transient serial errors we can briefly tolerate."""
+    try:
+        msg = (str(err) or '').lower()
+    except Exception:
+        msg = ''
+    # Common transient patterns
+    transient_tokens = [
+        'temporarily unavailable',
+        'resource temporarily unavailable',
+        'device or resource busy',
+        'timeout',
+        'operation not permitted',
+        'ioerror',
+        'i/o error',
+        'eio',
+        'eagain',
+        'eintr'
+    ]
+    if any(tok in msg for tok in transient_tokens):
+        return True
+    # errno-based hints
+    eno = getattr(err, 'errno', None)
+    if eno in (4, 11):  # EINTR, EAGAIN
+        return True
+    # pyserial packs original OSError as first arg sometimes
+    if hasattr(err, 'args') and err.args:
+        for a in err.args:
+            if isinstance(a, OSError):
+                if getattr(a, 'errno', None) in (4, 11):
+                    return True
+                try:
+                    amsg = (str(a) or '').lower()
+                    if any(tok in amsg for tok in transient_tokens):
+                        return True
+                except Exception:
+                    pass
+    return False
 
 def disable_cat_audio(ser):
-    """Ensure audio stream to CAT is disabled after TX ends (UA0)."""
-    state['cat_audio_enabled'] = False
+    """Keep CAT audio streaming enabled after TX and ensure radio speaker is muted (UA2) without momentary unmute."""
+    # Keep streaming state TRUE; do not flip to UA1 before muting to avoid audible blip
+    state['cat_audio_enabled'] = True
     try:
-        ser.write(b";UA0;")
-        ser.flush()
-        time.sleep(0.05)  # small settling delay
-        log("Sent UA0 after TX", "DEBUG")
+        if config.get('unmute', False):
+            # User explicitly wants speaker unmuted
+            send_cat(b"UA1;", ser)
+            log("Post-TX: speaker left unmuted per --unmute", "DEBUG")
+        else:
+            # Hard-mute speaker; assume streaming path remains active from prior enable
+            send_cat(b"UA2;", ser)
+            log("Post-TX: speaker muted (UA2) without UA1 pre-toggle", "DEBUG")
+        time.sleep(0.05)
     except Exception as e:
-        log(f"UA0 send error: {e}", "ERROR")
+        log(f"UA1/UA2 send error: {e}", "ERROR")
 
 def enable_cat_audio(ser):
-    """Send UA1; to truSDX to enable CAT-audio ahead of TX"""
+    """Enable CAT-audio path and apply requested speaker state without changing mode or momentary unmute."""
     try:
-        # First ensure we're in USB mode (MD2)
-        send_cat(b'MD2;', ser, post_delay=0.050)  # Set USB mode first
-        log('Sent MD2; (USB mode)', 'INFO')
-        
-        # Then enable CAT audio with longer delay
-        send_cat(b'UA1;', ser, post_delay=0.100)  # Increased delay from 30ms to 100ms
-        log('Sent UA1; (enable CAT-audio)', 'INFO')
+        # Do not force radio mode here; leave current mode untouched
+        # Enable CAT audio and set speaker state
+        if config.get('unmute', False):
+            # Speaker unmuted (UA1)
+            send_cat(b'UA1;', ser, post_delay=0.050)
+            log('Sent UA1; (enable CAT-audio, speaker unmuted)', 'INFO')
+        else:
+            # Enable streaming while keeping speaker muted (UA2 only)
+            send_cat(b'UA2;', ser, post_delay=0.050)
+            log('Sent UA2; (enable CAT-audio, speaker muted without UA1 pre-toggle)', 'INFO')
         
         # Additional settling time for truSDX hardware
         time.sleep(0.050)  # Extra 50ms for hardware to stabilize
-        
-        # Set output power to maximum (100W) - truSDX might need this
-        send_cat(b'PC100;', ser, post_delay=0.050)  # Set power to 100W
-        log('Sent PC100; (set power to 100W)', 'INFO')
     except Exception as e:
-        log(f'UA1 send failed: {e}', 'ERROR')
+        log(f'UA1/UA2 send failed: {e}', 'ERROR')
+
+def _remind_tx_buffer(context: str = ""):
+    try:
+        ms = int(config.get('tx_buffer_ms', 300))
+        chunk = int(config.get('us_chunk_bytes', 144))
+        tail_ms = ms + int((chunk / float(US_TX_RATE)) * 1000)
+        note = f"[REMINDER] TX ring buffer = {ms} ms (pacer chunk {chunk} B) — contributes up to ~{tail_ms} ms to TX tail."
+        if context:
+            note = f"{note} [{context}]"
+        print(note)
+        log(note, "INFO")
+    except Exception:
+        pass
 
 def handle_vox(samples8, ser):
     if (128 - min(samples8)) == 64 and (max(samples8) - 127) == 64: # if does contain very loud signal
@@ -1401,16 +2056,13 @@ def handle_vox(samples8, ser):
                 enable_cat_audio(ser)
                 state['cat_audio_enabled'] = True
             status[0] = True  # Set TX state BEFORE entering TX mode
-            log("UA1 → TX0", level='RECONNECT')
+            log("CAT-audio → TX0", level='RECONNECT')
             send_cat(b";TX0;", ser)  # TX0 = enter TX mode for truSDX
     elif status[0]:  # in TX and no audio detected (silence)
         tx_cat_delay(ser)  # Call delay BEFORE RX command
         log("TX0 → audio-stream → RX", level='RECONNECT')
-        send_cat(b";RX;", ser)  # RX = exit TX mode for truSDX
-        log("TX sequence end – disabling CAT-audio", level='RECONNECT')
-        disable_cat_audio(ser)  # Send UA0 after exiting TX
-        log("RX → UA0", level='RECONNECT')
-        status[0] = False  # Clear TX state after exiting
+        close_us_then_rx(ser, reason='VOX release')
+        log("RX → UA2", level='RECONNECT')
 
 def handle_rts_dtr(ser, cat):
     if not status[4] and (cat.cts or cat.dsr):
@@ -1419,15 +2071,16 @@ def handle_rts_dtr(ser, cat):
             state['cat_audio_enabled'] = True
         status[4] = True    # keyed by RTS/DTR
         status[0] = True    # Set TX state BEFORE entering TX mode
-        #log("***TX mode - entering with TX1")
-        send_cat(b";TX1;", ser)  # TX1 = enter TX mode
-    elif status[4] and not (cat.cts or cat.dsr):  #if keyed by RTS/DTR
-        tx_cat_delay(ser)  # Call delay BEFORE TX0 command
-        send_cat(b";TX0;", ser)  # TX0 = exit TX mode
-        disable_cat_audio(ser)  # Send UA0 after exiting TX
+        # Enter TX mode on truSDX: TX0
+        send_cat(b";TX0;", ser)
+        pause_polls(1.2)  # allow audio path to spin up without background polls
+        state['tx_grace_until'] = time.time() + config.get('tx_start_grace', 1.8)
+        _remind_tx_buffer("PTT ON (RTS/DTR)")
+    elif status[4] and not (cat.cts or cat.dsr):  # if keyed by RTS/DTR
+        tx_cat_delay(ser)  # Call delay BEFORE RX command
+        close_us_then_rx(ser, reason='RTS/DTR release')
         status[4] = False
-        status[0] = False  # Clear TX state after exiting
-        #log("***RX mode - exited with TX0")
+        #log("***RX mode - exited with RX")
     
 def handle_cat(pastream, ser, cat):
     if(cat.inWaiting()):
@@ -1471,10 +2124,6 @@ def handle_cat(pastream, ser, cat):
                     
                     # Synchronize CAT response transmission
                     try:
-                        # Ensure buffer is clear and wait for any ongoing transmission to complete
-                        cat.reset_output_buffer()
-                        time.sleep(0.001)  # Brief pause to ensure buffer is actually clear
-                        
                         # Write response in a single atomic operation
                         cat.write(ts480_response)
                         cat.flush()
@@ -1509,26 +2158,63 @@ def handle_cat(pastream, ser, cat):
                         # Query power to check if hardware is ready
                         power_response = query_radio('PC', retries=1, timeout=0.5, ser_handle=ser)
                         if power_response:
-                            power_str = power_response.decode('utf-8').strip(';')
+                            power_str = power_response.decode('ascii', errors='ignore').strip(';')
                             print(f"\033[1;36m[TX DEBUG] Power query before TX1: {power_str}\033[0m")
                         else:
                             print(f"\033[1;33m[TX DEBUG] No power response before TX1\033[0m")
                     
                     status[0] = True  # Set TX state BEFORE sending TX command
                     print("\033[1;31m[TX] Transmit mode\033[0m")
-                    pastream.stop_stream()
-                    pastream.start_stream()
-                    time.sleep(0.1)  # Ensure stream is stable before reading
-                
+                    # Keep audio streams running; no stop/start to avoid breaking app-side devices
+                    log("[TX] Entered PTT - streams kept active", "INFO")
+                    # We handled TX1; translation already, do not forward original TX1; to radio
+                    continue
+                # Intercept TX0; explicitly to translate to RX; and avoid forwarding
+                if d.startswith(b"TX0"):
+                    try:
+                        if status[0]:
+                            tx_cat_delay(ser)
+                        close_us_then_rx(ser, reason='TX0 intercept')
+                        print("\033[1;32m[RX] Receive mode\033[0m")
+                        log("[RX] Translated TX0; -> RX; and disabled CAT audio", "INFO")
+                    except Exception as _e:
+                        log(f"[RX] Error translating TX0->RX: {_e}", "ERROR")
+                    continue
+                # Intercept RX; explicitly to ensure US stream is closed before RX is sent to hardware
+                if d.startswith(b"RX"):
+                    try:
+                        if status[0]:
+                            tx_cat_delay(ser)
+                        close_us_then_rx(ser, reason='explicit RX')
+                        print("\033[1;32m[RX] Receive mode\033[0m")
+                        log("[RX] Intercepted RX; kept CAT audio stream active and muted speaker", "INFO")
+                    except Exception as _e:
+                        log(f"[RX] Error handling RX command: {_e}", "ERROR")
+                    continue
+
                 # Forward to radio if not handled locally
-                if status[0]:
+                # During TX, defer forwarding to avoid puncturing the US audio stream
+                if status[0] and config.get('defer_cat_during_tx', False):
+                    try:
+                        state['deferred_cat'].append(d)
+                        # ACK to CAT client so it doesn't stall
+                        cat.write(b';')
+                        cat.flush()
+                        log(f"[DEFER] Queued CAT during TX: {d}")
+                    except Exception as _ack_err:
+                        log(f"[DEFER] Error queuing/acking CAT during TX: {_ack_err}", 'WARNING')
+                    # Skip immediate forwarding
+                    continue
+
+                # If not deferring, only insert ';' to break a stream if a US TX stream is actually active
+                if status[0] and state.get('tx_us_active', False):
                     tx_cat_delay(ser)
-                    ser.write(b";")  # in TX mode, interrupt CAT stream by sending ; before issuing CAT cmd
-                    ser.flush()
+                    close_us_if_active(ser, reason='forwarded CAT')
                 
                 log(f"I: {d}")
-                ser.write(d)                # fwd data on CAT port to trx
-                ser.flush()
+                with radio_lock:
+                    ser.write(d)                # fwd data on CAT port to trx
+                    ser.flush()
                 print(f"\033[1;33m[FWD] \033[0m{d.decode('utf-8', errors='ignore').strip()} \033[1;31m→ truSDX\033[0m")
                 
                 # For frequency queries, we need to wait for and capture the response
@@ -1538,7 +2224,7 @@ def handle_cat(pastream, ser, cat):
                     if ser.in_waiting > 0:
                         response = ser.read(ser.in_waiting)
                         if response.startswith(b"FA") and len(response) >= 15:
-                            new_freq = response[2:-1].decode().ljust(11,'0')[:11]
+                            new_freq = response[2:-1].decode('ascii', errors='ignore').ljust(11,'0')[:11]
                             radio_state['vfo_a_freq'] = new_freq
                             freq_mhz = float(new_freq) / 1000000.0
                             print(f"\033[1;32m[FREQ] ✅ Updated frequency: {freq_mhz:.3f} MHz\033[0m")
@@ -1554,13 +2240,16 @@ def handle_cat(pastream, ser, cat):
                     # Note: tx_cat_delay was already called above if status[0] was True
                     # So we don't need to call it again here
                     if state.get('cat_audio_enabled', False):
-                        print("\033[1;33m[RX] Disabling CAT audio (UA0) after TX...\033[0m")
+                        print("\033[1;33m[RX] Keeping CAT audio stream active; muting speaker (UA2)...\033[0m")
                         disable_cat_audio(ser)
-                        state['cat_audio_enabled'] = False
+                        state['cat_audio_enabled'] = True
                     status[0] = False  # Clear TX state after sending command
                     print("\033[1;32m[RX] Receive mode\033[0m")
-                    pastream.stop_stream()
-                    pastream.start_stream()
+                    # Do not toggle streams; keep them running so waterfall resumes immediately
+                    log("[RX] Exited PTT - streams remain active", "INFO")
+                    state['last_tx_audio_time'] = 0.0
+                    if config.get('verbose', False):
+                        log("[SAFETY] Timer stopped (commanded PTT OFF)")
                
         except Exception as e:
             log(f"CAT error: {e}")
@@ -1569,43 +2258,310 @@ def handle_cat(pastream, ser, cat):
 def transmit_audio_via_serial(pastream, ser, cat):
     try:
         log("transmit_audio_via_serial_cat")
+        last_tx_log = 0.0
         while status[2]:
-            handle_cat(pastream, ser, cat)
-            if(platform == "win32" and not config['no_rtsdtr']): handle_rts_dtr(ser, cat)
-            if (status[0] or config['vox']) and pastream.get_read_available() > 0:    # in TX mode, and audio available
-                samples = pastream.read(config['block_size'], exception_on_overflow = False)
-                arr = array.array('h', samples)
-                samples8 = bytearray([128 + x//256 for x in arr])  # was //512 because with //256 there is 5dB too much signal. Win7 only support 16 bits input audio -> convert to 8 bits
-                
-                # Conservative filtering to prevent corruption of CAT responses
-                # Only filter the most critical CAT command delimiter
-                samples8 = samples8.replace(b'\x3b', b'\x3a')      # filter ; of stream (essential)
-                
-                if status[0]: ser.write(samples8)
-                if config['vox']: handle_vox(samples8, ser)
-            else:
-                time.sleep(0.001)
+            try:
+                handle_cat(pastream, ser, cat)
+                if (platform == "win32" and not config['no_rtsdtr']):
+                    handle_rts_dtr(ser, cat)
+
+                # Manage US framing for TX audio per truSDX CAT extension
+                # If using the paced US writer, let the pacer open/close US.
+                if not config.get('use_us_pacer', True):
+                    # Do NOT start US streaming during tune (TX2;) — the radio generates its own tune tone
+                    if status[0] and (not state.get('tune_active', False)) and not state.get('tx_us_active', False) and not state.get('suspend_tx_audio', False):
+                        try:
+                            # Start US streaming without a leading ';' to ensure radio enters stream mode
+                            with radio_lock:
+                                ser.write(b'US')
+                                ser.flush()
+                            state['tx_us_active'] = True
+                            state['last_tx_audio_time'] = time.time()  # initialize timer in case no audio flows
+                            log('[TX] PTT ON – started US frame (no leading ;)')
+                            if config.get('verbose', False):
+                                # Quick diagnostic at US start to confirm app TX availability
+                                try:
+                                    ra = pastream.get_read_available() if pastream else -1
+                                except Exception:
+                                    ra = -1
+                                log(f"[TX DIAG] Input read_available at US start: {ra}")
+                                log(f"[SAFETY] Timer initialized at US start. Timeout={PTT_SILENCE_TIMEOUT}s")
+                        except Exception as e:
+                            log(f'[TX] Error starting US frame: {e}', 'ERROR')
+                    elif (not status[0]) and state.get('tx_us_active', False):
+                        try:
+                            with radio_lock:
+                                ser.write(b';')
+                                ser.flush()
+                            state['tx_us_active'] = False
+                            log('[TX] PTT OFF – closed US frame')
+                            state['last_tx_audio_time'] = 0.0
+                            if config.get('verbose', False):
+                                log("[SAFETY] Timer stopped at US end (PTT OFF)")
+                        except Exception as e:
+                            log(f'[TX] Error closing US frame: {e}', 'ERROR')
+
+                # TX audio path
+                if (status[0] or config['vox']) and pastream and pastream.get_read_available() > 0:
+                    # If we are suspending TX audio for a critical CAT close, skip reads/writes briefly
+                    if state.get('suspend_tx_audio', False):
+                        time.sleep(0.001)
+                        continue
+                    s16_bytes = pastream.read(config['block_size'], exception_on_overflow=False)
+                    # Downsample to CAT TX rate and convert to U8
+                    samples8 = resample_s16_to_u8_11520(s16_bytes)
+                    # Avoid sending ';' inside the stream
+                    if samples8:
+                        samples8 = samples8.replace(b'\x3b', b'\x3a')
+                    if status[0] and samples8 and not state.get('suspend_tx_audio', False):
+                        if config.get('use_us_pacer', True):
+                            tx_buffer_write(samples8)
+                        else:
+                            # Direct-write path (legacy)
+                            with radio_lock:
+                                ser.write(samples8)
+                        # Update safety timer only when non-silence audio is present
+                        import time as _t
+                        try:
+                            pmin = min(samples8)
+                            pmax = max(samples8)
+                            p2p = pmax - pmin
+                        except Exception:
+                            p2p = 0
+                        # Use configured threshold only if provided; otherwise use global default
+                        thr = config['silence_pp_threshold'] if config.get('silence_pp_threshold') is not None else SILENCE_PP_THRESHOLD
+                        if p2p > thr:
+                            state['last_tx_audio_time'] = _t.time()
+                        # Optional periodic TX progress log
+                        if config.get('verbose', False) and (_t.time() - last_tx_log) >= 1.0:
+                            log(f"[TX] wrote {len(samples8)} bytes (p2p={p2p})")
+                            last_tx_log = _t.time()
+                    if config['vox'] and samples8:
+                        handle_vox(bytearray(samples8), ser)
+                else:
+                    time.sleep(0.001)
+            except (TypeError, ValueError) as loop_err:
+                # Prevent unexpected data/type issues from killing the TX thread
+                log(f"Unexpected error in TX loop: {loop_err}")
+                time.sleep(0.01)
+                continue
     except (serial.SerialException, OSError) as e:
-        log(f"Serial error in transmit_audio_via_serial: {e}")
-        print(f"\033[1;33m[TX] 📡 Serial disconnection detected during transmission\033[0m")
-        
-        # Set disconnection flag and trigger reconnection
-        state['hardware_disconnected'] = True
-        state['connection_stable'] = False
-        
-        # Trigger reconnection if not already in progress
-        if not state.get('reconnecting', False):
-            print(f"\033[1;31m[TX] 🔄 Triggering reconnection from TX thread...\033[0m")
-            threading.Thread(target=safe_reconnect, daemon=True).start()
-        
-        status[2] = False
-        if config['verbose']: raise e
+        log(f"Serial error in TX thread: {e}", "WARNING")
+        now = time.time()
+        if now - state.get('last_serial_error_time', 0) > SOFT_ERROR_WINDOW:
+            state['serial_error_streak'] = 0
+        state['serial_error_streak'] += 1
+        state['last_serial_error_time'] = now
+        streak = state['serial_error_streak']
+        limit = state.get('max_serial_soft_errors', 5)
+
+        if _is_transient_serial_error(e) and streak <= limit:
+            print(f"\033[1;33m[TX] ⚠️ Transient TX serial error (streak {streak}/{limit}) — retrying...\033[0m")
+            time.sleep(min(0.5, 0.1 * streak + 0.1))
+        else:
+            print(f"\033[1;31m[TX] 🔌 TX serial error threshold reached ({streak}/{limit}) — reconnecting\033[0m")
+            # Set disconnection flag and trigger reconnection
+            state['hardware_disconnected'] = True
+            state['connection_stable'] = False
+            state['serial_error_streak'] = 0
+
+            # Trigger reconnection if not already in progress
+            if not state.get('reconnecting', False):
+                threading.Thread(target=safe_reconnect, kwargs={'reason':'serial_error_tx', 'details': str(e)}, daemon=True).start()
+            
+            # Exit this thread; main loop continues
+            if config['verbose']: raise e
     except Exception as e:
         log(f"Unexpected error in transmit_audio_via_serial: {e}")
-        status[2] = False
+        # Exit this thread; main loop continues
         if config['verbose']: raise
 
+def us_pacer(ser):
+    """Write a steady 11,520 B/s U8 stream to the radio during TX, decoupled from PyAudio cadence.
+    Uses fixed-size chunks at fixed intervals. Pads with 0x80 (silence) on underrun.
+    """
+    try:
+        chunk_bytes = int(config.get('us_chunk_bytes', 144))
+        if chunk_bytes <= 0:
+            chunk_bytes = 144
+        interval_s = float(chunk_bytes) / float(US_TX_RATE)
+        neutral = b'\x80' * chunk_bytes
+        last_log = 0.0
+        while status[2]:
+            try:
+                # If not transmitting or tune active or suspended, ensure US is closed
+                if (not status[0]) or state.get('tune_active', False) or state.get('suspend_tx_audio', False):
+                    if state.get('tx_us_active', False):
+                        try:
+                            with radio_lock:
+                                ser.write(b';')
+                                ser.flush()
+                            state['tx_us_active'] = False
+                            log('[PACER] Closed US (TX idle/suspended)')
+                        except Exception as e:
+                            log(f'[PACER] Error closing US: {e}', 'WARNING')
+                    time.sleep(0.005)
+                    continue
+                # Ensure US is open
+                if not state.get('tx_us_active', False):
+                    try:
+                        with radio_lock:
+                            ser.write(b'US')
+                            ser.flush()
+                        state['tx_us_active'] = True
+                        state['last_tx_audio_time'] = time.time()
+                        init_tx_buffer(max_bytes=int(config.get('tx_buffer_ms', 500)) * US_TX_RATE // 1000)
+                        if config.get('verbose', False):
+                            log(f'[PACER] Opened US; chunk={chunk_bytes}B interval={interval_s*1000:.2f}ms buf={state.get("tx_buf_max")}B')
+                    except Exception as e:
+                        log(f'[PACER] Error opening US: {e}', 'ERROR')
+                        time.sleep(0.01)
+                        continue
+                # Prepare chunk
+                data = tx_buffer_read(chunk_bytes)
+                if len(data) < chunk_bytes:
+                    # Pad with neutral 0x80
+                    pad = chunk_bytes - len(data)
+                    if len(data) == 0:
+                        state['tx_underruns'] = state.get('tx_underruns', 0) + 1
+                    data = data + neutral[:pad]
+                # Write chunk
+                with radio_lock:
+                    ser.write(data)
+                # Optional debug every second
+                if config.get('verbose', False):
+                    now = time.time()
+                    if now - last_log >= 1.0:
+                        buf_len = len(state.get('tx_buf', b''))
+                        ovf = state.get('tx_overflows', 0)
+                        und = state.get('tx_underruns', 0)
+                        log(f'[PACER] tx_buf={buf_len}B ovf={ovf} und={und}')
+                        last_log = now
+                # Sleep until next tick
+                t0 = time.perf_counter()
+                # Busy-wait-ish sleep to be more accurate than time.sleep alone
+                target = t0 + interval_s
+                while True:
+                    now = time.perf_counter()
+                    remain = target - now
+                    if remain <= 0:
+                        break
+                    if remain > 0.002:
+                        time.sleep(remain - 0.001)
+                    else:
+                        # short spin for sub-millisecond
+                        time.sleep(0)
+            except Exception as loop_err:
+                log(f'[PACER] Loop error: {loop_err}', 'WARNING')
+                time.sleep(0.01)
+                continue
+    except Exception as e:
+        log(f'[PACER] Fatal error: {e}', 'ERROR')
+
+
 def poll_power():
+    """Poll radio power output and detect watts=0 for reconnection feedback
+    Auto-disables if PC is unsupported (repeated '?;' responses).
+    """
+    if config.get('no_power_monitor', False):
+        log("Power monitoring disabled via CLI")
+        return
+    try:
+        # Wait a bit for the system to stabilize before starting power polling
+        time.sleep(5)
+        
+        log("Power monitor started", "INFO")
+        print("\033[1;32m[POWER] Power monitoring active\033[0m")
+        
+        last_power_check = time.time()
+        power_zero_count = 0
+        unsupported_count = 0
+        
+        while status[2]:
+            try:
+                # Skip power queries during TX to avoid breaking US stream
+                if status[0]:
+                    last_power_check = time.time()
+                    time.sleep(0.5)
+                    continue
+                # Respect temporary poll pause window during critical radio operations
+                if polls_paused():
+                    time.sleep(0.1)
+                    continue
+                current_time = time.time()
+                
+                # Poll power every POWER_POLL_INTERVAL seconds
+                if current_time - last_power_check >= POWER_POLL_INTERVAL:
+                    try:
+                        # Only query power if we have a stable connection and ser is available
+                        if (state.get('ser') and 
+                            not state.get('reconnecting', False) and 
+                            state.get('connection_stable', True)):
+                            
+                            power_response = query_radio('PC', retries=1, timeout=POWER_TIMEOUT)
+                            
+                            if power_response:
+                                # Parse power response (format: PC<nnn>; where nnn is power in watts)
+                                # Also handle FW000; firmware response indicating 0W
+                                power_str = power_response.decode('ascii', errors='ignore').strip(';')
+                                
+                                # If radio returns ';' or '?;' to PC, consider unsupported
+                                if power_str in (';', '?') or power_str.startswith('?'):
+                                    unsupported_count += 1
+                                else:
+                                    unsupported_count = 0
+                                
+                                # Handle both PC<nnn> and FW000 responses
+                                if power_str.startswith('PC') and len(power_str) >= 5:
+                                    try:
+                                        watts = int(power_str[2:5])  # Extract 3-digit power value
+                                    except ValueError:
+                                        watts = 0
+                                elif power_str.startswith('FW') and '000' in power_str:
+                                    # FW000 firmware response indicates 0W - trigger reconnection logic
+                                    watts = 0
+                                    if config.get('verbose', False):
+                                        log(f"FW000 firmware response detected - treating as 0W", "WARNING")
+                                else:
+                                    watts = 0
+                                    if config.get('verbose', False):
+                                        log(f"Invalid power response format: {power_str}", "WARNING")
+                                
+                                # Process the watts reading regardless of source (PC or FW)
+                                if watts == 0:
+                                    power_zero_count += 1
+                                    if config.get('verbose', False):
+                                        log(f"Power poll: 0W detected (count: {power_zero_count})", "WARNING")
+                                else:
+                                    if power_zero_count > 0:
+                                        log(f"Power restored: {watts}W", "INFO")
+                                        print(f"\033[1;32m[POWER] ✅ Power restored: {watts}W\033[0m")
+                                    power_zero_count = 0
+                            else:
+                                unsupported_count += 1
+                        
+                        # If repeatedly unsupported, disable power monitoring for this session
+                        if unsupported_count >= 6:
+                            print("\033[1;33m[POWER] PC command unsupported by radio, disabling power monitor for this session\033[0m")
+                            log("Disabling power monitor (PC unsupported)", "WARNING")
+                            return
+                        
+                        last_power_check = current_time
+                        
+                    except Exception as e:
+                        if config.get('verbose', False):
+                            log(f"Error in power polling iteration: {e}", "ERROR")
+                
+                time.sleep(2.0)  # Check every 2 seconds (less frequent to avoid issues)
+                
+            except Exception as e:
+                if config.get('verbose', False):
+                    log(f"Error in power polling loop: {e}", "ERROR")
+                time.sleep(5.0)  # Wait longer on errors
+            
+    except Exception as e:
+        log(f"Power monitor error: {e}", "ERROR")
+        print(f"\033[1;31m[POWER ERROR] {e}\033[0m")
     """Poll radio power output and detect watts=0 for reconnection feedback"""
     if config.get('no_power_monitor', False):
         log("Power monitoring disabled via CLI")
@@ -1625,6 +2581,11 @@ def poll_power():
             try:
                 current_time = time.time()
                 
+                # Skip power queries during TX to avoid breaking US stream
+                if status[0]:
+                    last_power_check = current_time
+                    time.sleep(0.5)
+                    continue
                 # Poll power every POWER_POLL_INTERVAL seconds
                 if current_time - last_power_check >= POWER_POLL_INTERVAL:
                     try:
@@ -1638,7 +2599,7 @@ def poll_power():
                             if power_response:
                                 # Parse power response (format: PC<nnn>; where nnn is power in watts)
                                 # Also handle FW000; firmware response indicating 0W
-                                power_str = power_response.decode('utf-8').strip(';')
+                                power_str = power_response.decode('ascii', errors='ignore').strip(';')
                                 
                                 # Handle both PC<nnn> and FW000 responses
                                 if power_str.startswith('PC') and len(power_str) >= 5:
@@ -1712,9 +2673,18 @@ def monitor_connection():
         print("\033[1;32m[MONITOR] Connection monitoring active\033[0m")
         
         while status[2]:
+            # Respect temporary poll pause window during critical radio operations
+            if polls_paused():
+                time.sleep(0.2)
+                continue
             with monitor_lock:
                 current_time = time.time()
                 time_since_data = current_time - state['last_data_time']
+                
+                # If streaming audio is active, keep the connection considered alive
+                if status[1]:
+                    state['last_data_time'] = current_time
+                    time_since_data = 0.0
                 
                 # Use different timeouts based on TX status
                 timeout_threshold = TX_CONNECTION_TIMEOUT if status[0] else CONNECTION_TIMEOUT
@@ -1722,26 +2692,52 @@ def monitor_connection():
                 # Check if we haven't received data for too long
                 if time_since_data > timeout_threshold and state['connection_stable']:
                     tx_mode_str = "(TX MODE)" if status[0] else ""
-                    print(f"\033[1;33m[MONITOR] ⚠️ No data for {time_since_data:.1f}s {tx_mode_str}- connection unstable\033[0m")
-                    state['connection_stable'] = False
                     
-                    # Log reconnection message with bold color header
-                    log("Connection lost - initiating reconnection sequence", "RECONNECT")
+                    # Heartbeat with a command the radio actually supports (FA frequency query)
+                    heartbeat_ok = False
+                    try:
+                        if state.get('ser'):
+                            if not status[0]:
+                                hb_resp = query_radio('FA', retries=1, timeout=0.5)
+                                if hb_resp:
+                                    update_data_timestamp()
+                                    heartbeat_ok = True
+                                    state['heartbeat_misses'] = 0
+                                    if config.get('verbose', False):
+                                        log("Heartbeat (FA) succeeded, suppressing reconnection", "INFO")
+                            else:
+                                # Suppress heartbeats entirely during TX to avoid corrupting US audio stream
+                                heartbeat_ok = True
+                    except Exception as hb_err:
+                        if config.get('verbose', False):
+                            log(f"Heartbeat error: {hb_err}", "WARNING")
                     
-                    # Flag TX connection lost if in TX mode
-                    if status[0]:
-                        status[5] = True
-                        print("\033[1;31m[MONITOR] 🚨 TX CONNECTION LOST - Priority reconnection!\033[0m")
-                    
-                    # Trigger reconnection if not already in progress
-                    if not state['reconnecting']:
-                        print("\033[1;31m[MONITOR] 🔄 Triggering automatic reconnection...\033[0m")
-                        threading.Thread(target=safe_reconnect, daemon=True).start()
+                    if heartbeat_ok:
+                        # Connection is alive; continue
+                        pass
+                    else:
+                        # Count consecutive heartbeat misses before reconnecting
+                        state['heartbeat_misses'] = state.get('heartbeat_misses', 0) + 1
+                        print(f"\033[1;33m[MONITOR] ⚠️ No data for {time_since_data:.1f}s {tx_mode_str} - heartbeat miss #{state['heartbeat_misses']}\033[0m")
+                        if state['heartbeat_misses'] < 3:
+                            # Postpone next check to avoid rapid-fire reconnections
+                            state['last_data_time'] = time.time()
+                        else:
+                            state['heartbeat_misses'] = 0
+                            state['connection_stable'] = False
+                            log("Connection lost - initiating reconnection sequence", "RECONNECT")
+                            if status[0]:
+                                status[5] = True
+                                print("\033[1;31m[MONITOR] 🚨 TX CONNECTION LOST - Priority reconnection!\033[0m")
+                            if not state['reconnecting']:
+                                print("\033[1;31m[MONITOR] 🔄 Triggering automatic reconnection...\033[0m")
+                                threading.Thread(target=safe_reconnect, kwargs={'reason':'heartbeat_timeout', 'details': f'no data {time_since_data:.1f}s, TX={status[0]}'}, daemon=True).start()
                 
                 # Reset connection status if we've received recent data
                 elif time_since_data <= 1.0 and not state['connection_stable']:
                     state['connection_stable'] = True
                     state['reconnect_count'] = 0
+                    state['heartbeat_misses'] = 0
                     log("Connection restored successfully", "RECONNECT")
                     print("\033[1;32m[MONITOR] ✅ Connection restored\033[0m")
             
@@ -1755,17 +2751,52 @@ def update_data_timestamp():
     """Update the timestamp when data is received"""
     with monitor_lock:
         state['last_data_time'] = time.time()
+        state['heartbeat_misses'] = 0
         was_unstable = not state['connection_stable'] or status[5]
         if was_unstable:
             state['connection_stable'] = True
             status[5] = False  # Clear TX connection lost flag
             print("\033[1;32m[MONITOR] ✅ Data received - connection and TX stable\033[0m")
 
-def safe_reconnect():
+def ptt_safety_monitor():
+    """Auto-release PTT if no TX audio is observed for PTT_SILENCE_TIMEOUT seconds.
+    This primarily addresses JS8Call 'Test PTT' not sending TX0; on release.
+    """
+    try:
+        while status[2]:
+            try:
+                if status[0] and not state.get('tune_active', False):
+                    now = time.time()
+                    # Honor TX start grace period to avoid first-TX auto-release
+                    if now < state.get('tx_grace_until', 0.0):
+                        time.sleep(0.1)
+                        continue
+                    last = state.get('last_tx_audio_time', 0.0)
+                    if last > 0 and (now - last) > PTT_SILENCE_TIMEOUT:
+                        log(f"[SAFETY] No TX audio for {now - last:.2f}s during PTT — sending RX to release", "WARNING")
+                        try:
+                            if state.get('ser'):
+                                close_us_then_rx(state['ser'], reason='safety auto-release')
+                        except Exception as e:
+                            log(f"[SAFETY] Error sending RX to release PTT: {e}", "ERROR")
+                        if config.get('verbose', False):
+                            log("[SAFETY] Timer stopped (auto-release)")
+                time.sleep(0.2)
+            except Exception:
+                time.sleep(0.5)
+                continue
+    except Exception as e:
+        log(f"PTT safety monitor error: {e}", "ERROR")
+
+def safe_reconnect(reason: str = 'unknown', details: str = ''):
     """Safely reconnect hardware with atomic handle replacement"""
     global status
     
     with handle_lock:
+        # Record reason and timestamp for diagnostics
+        state['last_disconnect_reason'] = reason
+        state['last_disconnect_time'] = time.time()
+        log(f"Reconnection triggered (reason={reason}) details={details}", "RECONNECT")
         if state['reconnecting']:
             print("\033[1;33m[RECONNECT] Already reconnecting, skipping...\033[0m")
             return
@@ -1829,11 +2860,37 @@ def safe_reconnect():
             # Reinitialize using the same logic as the original run() function
             platform_config = get_platform_config()
             
-            new_ser = serial.Serial(
-                find_serial_device(platform_config['trusdx_serial_dev']), 
-                115200, 
-                write_timeout=0
-            )
+            # Reopen the hardware serial port with exclusive access to avoid conflicts
+            port_path = find_serial_device(platform_config['trusdx_serial_dev'])
+            open_ok = False
+            for attempt in range(10):
+                try:
+                    try:
+                        new_ser = serial.Serial(
+                            port_path,
+                            115200,
+                            write_timeout=0.5,
+                            exclusive=True
+                        )
+                    except TypeError:
+                        new_ser = serial.Serial(
+                            port_path,
+                            115200,
+                            write_timeout=0.5
+                        )
+                    open_ok = True
+                    break
+                except Exception as e:
+                    msg = str(e)
+                    err = getattr(e, 'errno', None)
+                    if (err == 11) or ('resource temporarily unavailable' in msg.lower()) or ('device or resource busy' in msg.lower()):
+                        wait = 0.5 + 0.5 * attempt
+                        print(f"\033[1;33m[RECONNECT] Port busy, retrying in {wait:.1f}s ({attempt + 1}/10)...\033[0m")
+                        time.sleep(wait)
+                        continue
+                    raise
+            if not open_ok:
+                raise Exception(f"Could not exclusively open {port_path} after retries")
             
             # Set up serial port 2
             if platform_config['loopback_serial_dev']:
@@ -1882,32 +2939,30 @@ def safe_reconnect():
                 handle_cat.buffer = b''
                 log("CAT buffer reset after reconnection")
             
-            # Initialize radio with proper commands - send separately with delays
-            new_ser.write(b";MD2;")  # Set USB mode first
-            new_ser.flush()
-            time.sleep(0.2)  # Give hardware time to process mode change
-            
-            # Then set audio mute state
-            audio_cmd = b";UA2;" if not config['unmute'] else b";UA1;"
-            new_ser.write(audio_cmd)
-            new_ser.flush()
+            # Initialize radio without forcing mode; apply only CAT audio speaker state
+            if config.get('unmute', False):
+                new_ser.write(b";UA1;")
+                new_ser.flush()
+            else:
+                new_ser.write(b";UA2;")
+                new_ser.flush()
             time.sleep(0.3)
+            # Reflect that streaming path is active after reconnection
+            state['cat_audio_enabled'] = True
             
             # Initialize radio - send commands separately with delays
             time.sleep(2)  # Wait for device to stabilize
             
-            # Set USB mode first
-            new_ser.write(b";MD2;")
-            new_ser.flush()
-            time.sleep(0.3)  # Wait for mode change to process
-            
-            # Then set audio mute state
-            audio_cmd = b";UA2;" if not config['unmute'] else b";UA1;"
-            new_ser.write(audio_cmd)
-            new_ser.flush()
+            # Re-apply CAT audio speaker state again to be safe (mode unchanged)
+            if config.get('unmute', False):
+                new_ser.write(b";UA1;")
+                new_ser.flush()
+            else:
+                new_ser.write(b";UA2;")
+                new_ser.flush()
             time.sleep(0.5)
             
-            # Speaker-mute guarantee on reconnection - send unconditionally
+            # Speaker-mute guarantee on reconnection - final confirmation
             try:
                 if config['unmute']:
                     new_ser.write(b";UA1;")
@@ -1927,6 +2982,8 @@ def safe_reconnect():
         except Exception as e:
             log(f"Error during hardware re-init: {e}")
             print(f"\033[1;31m[RECONNECT] ❌ Reinitialization failed: {e}\033[0m")
+            # Signal the main loop that we are still disconnected so it can retry
+            state['hardware_disconnected'] = True
             state['reconnecting'] = False
             return
 
@@ -1951,7 +3008,7 @@ def safe_reconnect():
                 # If we were transmitting before disconnection, restart TX
                 if was_transmitting and status[5]:
                     print("\033[1;31m[RECONNECT] 🔄 Restoring TX mode after connection lost...\033[0m")
-                    send_cat(b";TX1;", state['ser'])  # TX1 = enter TX mode
+                    send_cat(b";TX0;", state['ser'])  # TX0 = enter TX mode
                     status[0] = True  # Restore TX state
                 
                 freq_mhz = float(preserved_freq) / 1000000.0
@@ -1965,11 +3022,19 @@ def safe_reconnect():
         # Restart threads
         status[2] = True
         threading.Thread(target=receive_serial_audio, args=(state['ser'], state['ser2'], state['out_stream']), daemon=True).start()
-        threading.Thread(target=play_receive_audio, args=(state['out_stream'],), daemon=True).start()
+        if state.get('out_stream'):
+            threading.Thread(target=play_receive_audio, args=(state['out_stream'],), daemon=True).start()
+        else:
+            log("RX audio stream not available - skipping playback thread", "WARNING")
         threading.Thread(target=transmit_audio_via_serial, args=(state['in_stream'], state['ser'], state['ser2']), daemon=True).start()
+        # Start US pacer thread if enabled
+        if config.get('use_us_pacer', True):
+            threading.Thread(target=us_pacer, args=(state['ser'],), daemon=True).start()
         
         # Restart connection monitoring
         threading.Thread(target=monitor_connection, daemon=True).start()
+        # Start PTT safety monitor
+        threading.Thread(target=ptt_safety_monitor, daemon=True).start()
         
         # Reset flags
         status[0] = False
@@ -1988,15 +3053,48 @@ def safe_reconnect():
         # Reset hardware disconnected flag after successful reconnection
         state['hardware_disconnected'] = False
 
+def _detect_trusdx_with_pactl():
+    """Detect TRUSDX sink and TRUSDX.monitor source via pactl. Returns True if both exist."""
+    if not shutil.which('pactl'):
+        return False
+    try:
+        sinks = subprocess.run(['pactl', 'list', 'short', 'sinks'], capture_output=True, text=True)
+        sources = subprocess.run(['pactl', 'list', 'short', 'sources'], capture_output=True, text=True)
+        has_sink = 'TRUSDX' in (sinks.stdout or '')
+        has_source = 'TRUSDX.monitor' in (sources.stdout or '') or 'TRUSDX.monitor' in (sinks.stdout or '')
+        return has_sink and has_source
+    except Exception:
+        return False
+
 def get_platform_config():
-    """Get platform-specific configuration"""
+    """Get platform-specific configuration
+    
+    On Linux, prefer PipeWire/Pulse TRUSDX sink if present; otherwise use ALSA loopback
+    PCM aliases (trusdx_tx/trusdx_rx).
+    """
     if platform == "linux" or platform == "linux2":
+        # Default to ALSA Loopback aliases
+        v_in = "trusdx_tx"
+        v_out = "trusdx_rx"
+
+        # Prefer PulseAudio/PipeWire routing when TRUSDX exists (detected via pactl), unless --force-alsa is set
+        if config.get('force_alsa', False):
+            state['using_pulse_trusdx'] = False
+        else:
+            if _detect_trusdx_with_pactl():
+                # Use PulseAudio device and route streams to TRUSDX via pactl after open
+                v_in = "pulse"
+                v_out = "pulse"
+                state['using_pulse_trusdx'] = True
+            else:
+                state['using_pulse_trusdx'] = False
+
         return {
             # IMPORTANT: These are from the driver's perspective:
             # - virtual_audio_dev_out: Audio OUTPUT from driver to WSJT-X (RX audio)
             # - virtual_audio_dev_in: Audio INPUT to driver from WSJT-X (TX audio)
-            'virtual_audio_dev_out': "TRUSDX_monitor",  # RX audio output to WSJT-X (Option #1 - preferred)
-            'virtual_audio_dev_in': "TRUSDX",           # TX audio input from WSJT-X (Option #1 - preferred)
+            'virtual_audio_dev_out': v_out,
+            'virtual_audio_dev_in': v_in,
             'trusdx_serial_dev': "USB Serial",
             'loopback_serial_dev': "",
             'cat_serial_dev': "",
@@ -2080,6 +3178,18 @@ def run():
         status[3] = False
         status[4] = False
 
+        # Initialize local handles to avoid UnboundLocalError during cleanup
+        ser = None
+        ser2 = None
+        in_stream = None
+        out_stream = None
+        _master1 = None
+        _master2 = None
+        master1 = None
+        master2 = None
+        slave1 = None
+        slave2 = None
+
         # Load persistent configuration
         persistent_config = load_config()
         PERSISTENT_PORTS.update(persistent_config)
@@ -2088,16 +3198,14 @@ def run():
         create_persistent_serial_ports()
 
         if platform == "linux" or platform == "linux2":
-           # Use ALSA loopback devices for audio (Option #1 - PREFERRED)
-           # IMPORTANT: These are from the perspective of WSJT-X/JS8Call:
-           # - TRUSDX.monitor receives audio FROM the radio (RX audio for WSJT-X to decode)
-           # - TRUSDX sends audio TO the radio (TX audio from WSJT-X)
-           virtual_audio_dev_out = "TRUSDX_monitor"  # RX audio FROM radio (goes OUT to WSJT-X)
-           virtual_audio_dev_in  = "TRUSDX"          # TX audio TO radio (comes IN from WSJT-X)
-           trusdx_serial_dev     = "USB Serial"
-           loopback_serial_dev   = ""
-           cat_serial_dev        = ""
-           alt_cat_serial_dev    = PERSISTENT_PORTS['cat_port']
+           # Obtain platform configuration (prefers TRUSDX if present, else ALSA loopback)
+           cfg = get_platform_config()
+           virtual_audio_dev_out = cfg['virtual_audio_dev_out']
+           virtual_audio_dev_in  = cfg['virtual_audio_dev_in']
+           trusdx_serial_dev     = cfg['trusdx_serial_dev']
+           loopback_serial_dev   = cfg['loopback_serial_dev']
+           cat_serial_dev        = cfg['cat_serial_dev']
+           alt_cat_serial_dev    = cfg['alt_cat_serial_dev']
         elif platform == "win32":
            virtual_audio_dev_out = "CABLE Output"
            virtual_audio_dev_in  = "CABLE Input"
@@ -2114,6 +3222,10 @@ def run():
         if config['direct']:
            virtual_audio_dev_out = "" # default audio device
            virtual_audio_dev_in  = "" # default audio device
+
+        # Expose selected audio device names for header display
+        state['audio_dev_in_name'] = virtual_audio_dev_in if virtual_audio_dev_in else 'default'
+        state['audio_dev_out_name'] = virtual_audio_dev_out if virtual_audio_dev_out else 'default'
 
         if config['verbose']:
             show_audio_devices()
@@ -2236,7 +3348,28 @@ def run():
             else:
                 print(f"\033[1;32m[SERIAL] Found truSDX on: {trusdx_port}\033[0m")
             
-            ser = serial.Serial(trusdx_port, 115200, write_timeout = 0)
+            # Request exclusive access to the serial device to prevent double-open by another instance
+            open_ok = False
+            for attempt in range(10):
+                try:
+                    try:
+                        ser = serial.Serial(port=trusdx_port, baudrate=115200, write_timeout=0.5, exclusive=True)
+                    except TypeError:
+                        # Older pyserial does not support 'exclusive'
+                        ser = serial.Serial(port=trusdx_port, baudrate=115200, write_timeout=0.5)
+                    open_ok = True
+                    break
+                except Exception as e:
+                    msg = str(e)
+                    err = getattr(e, 'errno', None)
+                    if (err == 11) or ('resource temporarily unavailable' in msg.lower()) or ('device or resource busy' in msg.lower()):
+                        wait = 0.5 + 0.5 * attempt
+                        print(f"\033[1;33m[SERIAL] Port busy, retrying in {wait:.1f}s ({attempt + 1}/10)...\033[0m")
+                        time.sleep(wait)
+                        continue
+                    raise
+            if not open_ok:
+                raise Exception(f"Could not exclusively open {trusdx_port} after retries")
             print(f"\033[1;32m[SERIAL] ✅ Connected to truSDX on {trusdx_port}\033[0m")
         except Exception as e:
             print(f"\033[1;31m[ERROR] truSDX device not found: {e}\033[0m")
@@ -2254,38 +3387,22 @@ def run():
             # Send basic initialization commands (like working 1.1.6)
             # UA2 = muted speaker, UA1 = unmuted speaker
             # Send commands separately with delays for better hardware compatibility
-            ser.write(b";MD2;")  # Set USB mode first
-            ser.flush()
-            time.sleep(0.3)  # Give hardware time to process mode change
-
-            # Retry setting audio mute/unmute state
-            retries = 3
-            for attempt in range(retries):
-                audio_cmd = b";UA2;" if not config['unmute'] else b";UA1;"
-                ser.write(audio_cmd)
+            # Do not change radio mode on startup; just apply speaker state
+            if config.get('unmute', False):
+                ser.write(b";UA1;")  # Enable CAT-audio, speaker unmuted
                 ser.flush()
-                time.sleep(0.5)  # Give radio time to process
-
-                # Capture response for logging
-                response = ser.read(ser.in_waiting)
-                log(f"Attempt {attempt + 1}/{retries}: Sent {audio_cmd.decode()} - received: {response}")
-                
-                # Assuming success response end with ';'
-                if response.endswith(b';'):
-                    break
-                else:
-                    time.sleep(0.2)  # Additional delay before retry
-            
-            # Ensure speaker is muted by sending explicit mute command
-            if not config['unmute']:
-                ser.write(b";UA2;")  # Explicitly mute the speaker
-                ser.flush() 
-                time.sleep(0.2)
-                print(f"\033[1;32m[INIT] ✅ Radio speaker muted (UA2)\033[0m")
+                time.sleep(0.3)
+                state['cat_audio_enabled'] = True
+                print(f"\033[1;33m[INIT] ✅ CAT-audio streaming enabled (UA1) - speaker unmuted\033[0m")
             else:
-                print(f"\033[1;33m[INIT] ✅ Radio speaker unmuted (UA1) - use --unmute flag to enable\033[0m")
-                
-            print(f"\033[1;32m[INIT] ✅ Radio initialized with basic commands\033[0m")
+                # Enable streaming while keeping speaker muted, without UA1 pre-toggle
+                ser.write(b";UA2;")
+                ser.flush()
+                time.sleep(0.3)
+                state['cat_audio_enabled'] = True
+                print(f"\033[1;32m[INIT] ✅ CAT-audio streaming enabled and speaker muted (UA2)\033[0m")
+            
+            print(f"\033[1;32m[INIT] ✅ Radio initialized with basic commands (mode unchanged)\033[0m")
         except Exception as e:
             print(f"\033[1;31m[INIT] Error initializing radio: {e}\033[0m")
         
@@ -2330,7 +3447,7 @@ def run():
                             
                             if len(fa_response) >= 13:  # FA + 11 digits + ;
                                 try:
-                                    actual_freq = fa_response[2:-1].decode().ljust(11,'0')[:11]
+                                    actual_freq = fa_response[2:-1].decode('ascii', errors='ignore').ljust(11,'0')[:11]
                                     if actual_freq != '00000000000' and actual_freq.isdigit():
                                         radio_state['vfo_a_freq'] = actual_freq
                                         freq_mhz = float(actual_freq) / 1000000.0
@@ -2393,12 +3510,22 @@ def run():
         print(f"\033[1;36m[DEBUG] Starting receive_serial_audio thread...\033[0m")
         threading.Thread(target=receive_serial_audio, args=(ser,ser2,out_stream), daemon=True).start()
         time.sleep(0.1)
-        print(f"\033[1;36m[DEBUG] Starting play_receive_audio thread...\033[0m")
-        threading.Thread(target=play_receive_audio, args=(out_stream,), daemon=True).start()
+        if out_stream:
+            print(f"\033[1;36m[DEBUG] Starting play_receive_audio thread...\033[0m")
+            threading.Thread(target=play_receive_audio, args=(out_stream,), daemon=True).start()
+        else:
+            print(f"\033[1;33m[AUDIO] RX audio stream not available - skipping playback thread\033[0m")
         time.sleep(0.1)
         print(f"\033[1;36m[DEBUG] Starting transmit_audio_via_serial thread...\033[0m")
         threading.Thread(target=transmit_audio_via_serial, args=(in_stream,ser,ser2), daemon=True).start()
         time.sleep(0.1)
+        # Start US pacer thread if enabled (steady 11,520 B/s writer)
+        if config.get('use_us_pacer', True):
+            print(f"\033[1;36m[DEBUG] Starting US pacer thread...\033[0m")
+            threading.Thread(target=us_pacer, args=(ser,), daemon=True).start()
+        # Start PTT safety monitor
+        threading.Thread(target=ptt_safety_monitor, daemon=True).start()
+        print(f"\033[1;32m[SAFETY] PTT safety monitor active (timeout {PTT_SILENCE_TIMEOUT:.1f}s)\033[0m")
         
         # Start connection monitoring after initialization stabilizes
         def delayed_connection_monitoring():
@@ -2425,11 +3552,12 @@ def run():
         print(f"\033[1;37m[INFO] Persistent CAT port:\033[0m {alt_cat_serial_dev}")
         
         # Audio devices are now using ALSA loopback (no PulseAudio setup needed)
-        print(f"\033[1;32m[AUDIO] Using ALSA loopback devices (Option #1):\033[0m")
-        print(f"\033[1;36m  • {virtual_audio_dev_in} → TX audio from WSJT-X to radio\033[0m")
-        print(f"\033[1;36m  • {virtual_audio_dev_out} → RX audio from radio to WSJT-X\033[0m")
+        print(f"\033[1;32m[AUDIO] Devices in use:\033[0m")
+        print(f"\033[1;36m  • Input (TX from app): {virtual_audio_dev_in}\033[0m")
+        print(f"\033[1;36m  • Output (RX to app): {virtual_audio_dev_out}\033[0m")
         
         print(f"\033[1;36m[READY] Waiting for connections from WSJT-X/JS8Call...\033[0m")
+        _remind_tx_buffer("Startup defaults")
         print()
         
         # Save current configuration
@@ -2454,7 +3582,7 @@ def run():
                 if not state.get('reconnecting', False):
                     log("Hardware disconnection detected in main loop - triggering reconnection")
                     print(f"\033[1;33m[MAIN] Hardware disconnection detected - attempting reconnection...\033[0m")
-                    threading.Thread(target=safe_reconnect, daemon=True).start()
+                    threading.Thread(target=safe_reconnect, kwargs={'reason':'main_loop_disconnection'}, daemon=True).start()
                     state['hardware_disconnected'] = False  # Clear flag
                 time.sleep(1)
                 continue
@@ -2498,28 +3626,46 @@ def run():
     try:
         # clean-up
         log("Closing")
-        time.sleep(1)   
+        time.sleep(1)
         if platform != "win32":  # Linux
-           #master1.close()
-           #master2.close()
-           #os.close(_master1)           
-           os.close(slave1)
-           #os.close(_master2)
-           os.close(slave2)
-           log("fd closed")
-        ser2.close()
-        ser.close()
+            try:
+                if slave1 is not None:
+                    os.close(slave1)
+            except Exception:
+                pass
+            try:
+                if slave2 is not None:
+                    os.close(slave2)
+            except Exception:
+                pass
+            log("fd closed")
+        try:
+            if ser2:
+                ser2.close()
+        except Exception:
+            pass
+        try:
+            if ser:
+                ser.close()
+        except Exception:
+            pass
         if in_stream:
-            in_stream.stop_stream()
-            in_stream.close()
+            try:
+                in_stream.stop_stream()
+                in_stream.close()
+            except Exception:
+                pass
         if out_stream:
-            out_stream.stop_stream()
-            out_stream.close()
+            try:
+                out_stream.stop_stream()
+                out_stream.close()
+            except Exception:
+                pass
         # Note: PyAudio instance will be terminated by atexit handler
         log("Closed")
     except Exception as e:
         log(e)
-        pass	
+        pass
 
 def check_js8call_ini():
     """Check JS8Call.ini for RTS/DTR settings and warn user once if still enabled"""
@@ -2568,10 +3714,11 @@ def main():
     # Check JS8Call.ini for RTS/DTR settings and warn if needed
     check_js8call_ini()
     
-    max_restart_attempts = 5
+    # 0 = infinite restarts (stay alive)
+    max_restart_attempts = 0
     restart_count = 0
     
-    while restart_count < max_restart_attempts:
+    while (max_restart_attempts == 0) or (restart_count < max_restart_attempts):
         try:
             # Reset global state for fresh start
             state['hardware_disconnected'] = False
@@ -2586,7 +3733,8 @@ def main():
                 restart_count += 1
                 log(f"[RESTART] Hardware disconnection detected - attempting restart #{restart_count}/{max_restart_attempts} in 3 seconds...", "WARNING")
                 
-                if restart_count >= max_restart_attempts:
+                # Only enforce a maximum if it's greater than zero (0 = infinite restarts)
+                if max_restart_attempts > 0 and restart_count >= max_restart_attempts:
                     log(f"[FATAL] Maximum restart attempts ({max_restart_attempts}) exceeded after hardware disconnections. Exiting.", "ERROR")
                     break
                     
@@ -2602,7 +3750,8 @@ def main():
             log(f"Main loop error (attempt {restart_count}/{max_restart_attempts}): {e}")
             log(f"[ERROR] Main loop failed (attempt {restart_count}/{max_restart_attempts}): {e}", "ERROR")
             
-            if restart_count >= max_restart_attempts:
+            # Only enforce a maximum if it's greater than zero (0 = infinite restarts)
+            if max_restart_attempts > 0 and restart_count >= max_restart_attempts:
                 log(f"[FATAL] Maximum restart attempts ({max_restart_attempts}) exceeded. Exiting.", "ERROR")
                 break
             
@@ -2621,19 +3770,73 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=f"truSDX-AI audio driver v{VERSION}", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("-v", "--verbose", action="store_true", default=False, help="increase verbosity")
     parser.add_argument("--vox", action="store_true", default=False, help="VOX audio-triggered PTT (Linux only)")
-    parser.add_argument("--unmute", action="store_true", default=False, help="Enable (tr)usdx audio")
+    parser.add_argument("--unmute", action="store_true", default=False, help="Unmute radio speaker (UA1). By default speaker is muted (UA2) while streaming.")
     parser.add_argument("--direct", action="store_true", default=False, help="Use system audio devices directly (bypasses ALSA Loopback card 0)")
     parser.add_argument("--no-rtsdtr", action="store_true", default=False, help="Disable RTS/DTR-triggered PTT")
     parser.add_argument("-B", "--block-size", type=int, default=512, help="RX Block size")
     parser.add_argument("-T", "--tx-block-size", type=int, default=48, help="TX Block size")
     parser.add_argument("--no-header", action="store_true", default=False, help="Skip initial version display")
-    parser.add_argument("--no-power-monitor", action="store_true", default=False, help="Disable power monitoring feature")
+    parser.add_argument("--no-power-monitor", action="store_true", default=True, help="Disable power monitoring feature (default: disabled)")
+    parser.add_argument("--power-monitor", action="store_true", default=False, help="Enable power monitoring (overrides --no-power-monitor)")
     parser.add_argument("--logfile", type=str, help="Override default log file location")
+    parser.add_argument("--ptt-silence-timeout", type=float, default=None, help="Auto-release PTT if no TX audio for this many seconds (default: 2.0)")
+    parser.add_argument("--silence-pp-threshold", type=int, default=None, help="Peak-to-peak threshold (0-255) to consider TX audio non-silent for safety timer (default: 2)")
+    parser.add_argument("--force-alsa", action="store_true", default=False, help="Force ALSA Loopback (trusdx_tx/trusdx_rx) devices and disable Pulse/TRUSDX routing")
+    parser.add_argument("--defer-cat-during-tx", action="store_true", default=True, help="Defer forwarding CAT set-commands to radio during TX; ack locally and queue to send after TX ends")
+    parser.add_argument("--tx-start-grace", type=float, default=1.2, help="Seconds to ignore initial TX silence for safety auto-release (warm-up protection)")
+    parser.add_argument("--use-us-pacer", action="store_true", default=True, help="Use paced US writer (steady 11,520 B/s) to match .exe behavior")
+    parser.add_argument("--no-use-us-pacer", dest="use_us_pacer", action="store_false", help="Disable paced US writer (use legacy direct-write path)" )
+    parser.add_argument("--us-chunk-bytes", type=int, default=144, help="US paced chunk size in bytes (default 144 → 12.5ms at 11,520 B/s)")
+    parser.add_argument("--tx-buffer-ms", type=int, default=300, help="Size of TX ring buffer in milliseconds (default 300ms)")
+    # Robust PTT-OFF controls
+    parser.add_argument("--robust-ptt-off", dest="robust_ptt_off", action="store_true", default=True, help="Reassert RX; a few times on PTT release to avoid stuck TX (default: enabled)")
+    parser.add_argument("--no-robust-ptt-off", dest="robust_ptt_off", action="store_false", help="Disable robust PTT-OFF reassertions")
+    parser.add_argument("--robust-ptt-off-attempts", type=int, default=4, help="Additional RX; reassert attempts after initial PTT OFF (default: 4)")
+    parser.add_argument("--robust-ptt-off-interval-ms", type=int, default=100, help="Delay between RX; reassert attempts in milliseconds (default: 100ms)")
+    # Post-release guard window
+    parser.add_argument("--ptt-release-guard-ms", type=int, default=500, help="Duration to continue nudging RX; after PTT release (default: 500ms)")
+    parser.add_argument("--ptt-release-guard-interval-ms", type=int, default=120, help="Interval between RX; nudges during guard (default: 120ms)")
     args = parser.parse_args()
     config = vars(args)
+
+    # Allow --power-monitor to override default disabled state
+    if config.get('power_monitor', False):
+        config['no_power_monitor'] = False
+
+    # Apply PTT safety timeout override if provided
+    # Also apply buffer cap based on --tx-buffer-ms at startup
+    try:
+        cap_bytes = int(config.get('tx_buffer_ms', 300)) * US_TX_RATE // 1000
+        state['tx_buf_max'] = cap_bytes
+    except Exception:
+        pass
+    if config.get('ptt_silence_timeout') is not None:
+        try:
+            val = float(config['ptt_silence_timeout'])
+            if val < 0:
+                val = 0.0
+            globals()['PTT_SILENCE_TIMEOUT'] = val
+        except Exception as _e:
+            pass
+
+    # Apply silence peak-to-peak threshold override if provided
+    if config.get('silence_pp_threshold') is not None:
+        try:
+            sval = int(config['silence_pp_threshold'])
+            if sval < 0:
+                sval = 0
+            if sval > 255:
+                sval = 255
+            globals()['SILENCE_PP_THRESHOLD'] = sval
+        except Exception:
+            pass
     
     # Setup logging before any other operations
     setup_logging()
+    log(f"[SAFETY] PTT silence timeout = {PTT_SILENCE_TIMEOUT}s, pp-threshold = {SILENCE_PP_THRESHOLD}")
+    log(f"[TX-START] Grace = {config.get('tx_start_grace')}s; Defer CAT during TX = {config.get('defer_cat_during_tx')}")
+    log(f"[ROBUST-PTT] Enabled={config.get('robust_ptt_off', True)} attempts={config.get('robust_ptt_off_attempts')} interval_ms={config.get('robust_ptt_off_interval_ms')}")
+    log(f"[PTT-GUARD] Window={config.get('ptt_release_guard_ms')}ms interval={config.get('ptt_release_guard_interval_ms')}ms")
     
     if config['verbose']: 
         print(config)

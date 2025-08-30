@@ -42,7 +42,7 @@ if (
     # Python and pip
     sudo apt-get install -y python3 python3-pip
     # Serial/audio dependencies
-    sudo apt-get install -y portaudio19-dev alsa-utils
+    sudo apt-get install -y portaudio19-dev alsa-utils libasound2-plugins pulseaudio-utils pavucontrol
     # Additional tools
     sudo apt-get install -y socat grep coreutils
   else
@@ -95,9 +95,9 @@ if (
     echo -e "${c_green}ALSA loopback module already loaded.${c_reset}"
   fi
 
-  # Create or update ~/.asoundrc with trusdx PCM devices
+  # Create or update ~/.asoundrc with a minimal, safe config that exposes Pulse to ALSA apps
   ASRC_FILE="${HOME}/.asoundrc"
-  echo -e "${c_blue}Configuring ALSA PCM devices...${c_reset}"
+  echo -e "${c_blue}Configuring ALSA (minimal pulse bridge)...${c_reset}"
 
   # Backup existing .asoundrc if it exists
   if [[ -f "${ASRC_FILE}" ]]; then
@@ -105,164 +105,36 @@ if (
     echo -e "${c_yellow}Backed up existing .asoundrc${c_reset}"
   fi
   
-  # Create complete .asoundrc with proper hints for Qt applications
+  # Minimal config: route ALSA default to PulseAudio/PipeWire
   cat > "${ASRC_FILE}" <<'ALSA'
-# ALSA configuration for truSDX loopback audio routing
-# Created for use with snd-aloop on Linux systems
-#
-# TX: hw:1,0,0 (apps to radio) - Loopback card 1, device 0, subdevice 0
-# RX: hw:1,1,0 (radio to apps) - Loopback card 1, device 1, subdevice 0
+# Minimal ALSA config to expose PulseAudio/PipeWire to ALSA apps
+# Previous config backed up as ~/.asoundrc.backup.*
 
-# PRIMARY DEVICES (Option #1 - PREFERRED)
-# User-friendly device names matching hardware labeling
-
-# TRUSDX - TX path (apps → truSDX)
-pcm.TRUSDX {
-    type plug
-    slave {
-        pcm "hw:1,0,0"
-        # Allow automatic rate/format conversion
-        # JS8Call/WSJT-X will negotiate the best settings
-    }
-    hint {
-        show on
-        description "TRUSDX - Audio output to radio (TX)"
-    }
+pcm.!default {
+    type pulse
 }
 
-ctl.TRUSDX {
-    type hw
-    card 1
+ctl.!default {
+    type pulse
 }
 
-# TRUSDX.monitor - RX path (truSDX → apps)
-pcm."TRUSDX.monitor" {
-    type plug
-    slave {
-        pcm "hw:1,1,0"
-        # Allow automatic rate/format conversion
-        # JS8Call/WSJT-X will negotiate the best settings
-    }
-    hint {
-        show on
-        description "TRUSDX.monitor - Audio input from radio (RX)"
-    }
+pcm.pulse {
+    type pulse
 }
 
-ctl."TRUSDX.monitor" {
-    type hw
-    card 1
+ctl.pulse {
+    type pulse
 }
-
-# TRUSDX_monitor - Alternative naming for compatibility
-pcm.TRUSDX_monitor {
-    type plug
-    slave {
-        pcm "hw:1,1,0"
-    }
-}
-
-# LEGACY DEVICES (Option #2 - kept for backwards compatibility)
-# These names are deprecated but kept for existing configurations
-
-pcm.trusdx_tx {
-    type plug
-    slave {
-        pcm "hw:1,0,0"
-    }
-    hint {
-        show on
-        description "[Legacy] truSDX TX - Audio output to radio"
-    }
-}
-
-ctl.trusdx_tx {
-    type hw
-    card 1
-}
-
-pcm.trusdx_rx {
-    type plug
-    slave {
-        pcm "hw:1,1,0"
-    }
-    hint {
-        show on
-        description "[Legacy] truSDX RX - Audio input from radio"
-    }
-}
-
-ctl.trusdx_rx {
-    type hw
-    card 1
-}
-
-# Extra sub-devices for WSJT-X compatibility
-pcm.trusdx_tx_app { type plug; slave.pcm "hw:0,1" }   # free playback
-ctl.trusdx_tx_app { type hw; card TRUSDX }
-pcm.trusdx_rx_app { type plug; slave.pcm "hw:1,1" }   # free capture
-ctl.trusdx_rx_app { type hw; card TRUSDX }
 ALSA
     
-    echo -e "${c_green}Created ALSA PCM devices with proper hints for Qt applications${c_reset}"
-    
-    # Create system-wide configuration for better visibility
-    SYSTEM_ALSA_DIR="/usr/share/alsa/alsa.conf.d"
-    if [[ -d "${SYSTEM_ALSA_DIR}" ]]; then
-      echo -e "${c_blue}Creating system-wide ALSA configuration...${c_reset}"
-      cat > /tmp/99-trusdx.conf <<'SYSALSA'
-# truSDX ALSA PCM devices configuration
-# This file makes trusdx_tx and trusdx_rx visible to all applications
-
-# TX device - Audio output to radio (WSJT-X/JS8Call transmit audio)
-pcm.trusdx_tx {
-    type plug
-    slave {
-        pcm "hw:0,0"
-        # Allow automatic format conversion
-        # Applications will negotiate the best format
-    }
-    hint {
-        show on
-        description "truSDX TX - Audio output to radio"
-    }
-}
-
-ctl.trusdx_tx {
-    type hw
-    card TRUSDX
-}
-
-# RX device - Audio input from radio (WSJT-X/JS8Call receive audio)
-pcm.trusdx_rx {
-    type plug
-    slave {
-        pcm "hw:0,1"
-        # Allow automatic format conversion
-        # Applications will negotiate the best format
-    }
-    hint {
-        show on
-        description "truSDX RX - Audio input from radio"
-    }
-}
-
-ctl.trusdx_rx {
-    type hw
-    card TRUSDX
-}
-SYSALSA
-      sudo cp /tmp/99-trusdx.conf "${SYSTEM_ALSA_DIR}/99-trusdx.conf"
-      rm /tmp/99-trusdx.conf
-      echo -e "${c_green}Created system-wide ALSA configuration${c_reset}"
-    fi
+    echo -e "${c_green}Created minimal ALSA config (default → pulse)${c_reset}"
     
     # Restore ALSA settings
     alsactl restore 2>/dev/null || true
     sudo alsactl nrestore 2>/dev/null || true
     
-    echo -e "${c_green}ALSA devices configured successfully!${c_reset}"
-    echo -e "${c_yellow}Note: The devices 'trusdx_tx' and 'trusdx_rx' should now be visible in JS8Call/WSJT-X${c_reset}"
+    echo -e "${c_green}ALSA configured successfully!${c_reset}"
+    echo -e "${c_yellow}Note: Apps will see 'pulse' and 'default' alongside your normal devices${c_reset}"
 ); then
   log_step "[4/6] Setting up ALSA loopback" OK
 else
@@ -346,62 +218,100 @@ else
   log_step "[5/6] Creating configuration" FAIL "$?"
 fi
 
-# Setup systemd service for automatic USB monitoring
+# Setup systemd service for automatic USB monitoring (DISABLED BY DEFAULT)
+# The following block has been intentionally commented out to ensure the driver
+# never auto-starts. You can re-enable this section once the driver is stable.
+#
+#: <<'TRUSDX_SERVICE_BLOCK'
+#if (
+#  echo -e "${c_blue}[6/6] Setting up TRUSDX.monitor service...${c_reset}"
+#  
+#  # Create symlink to avoid space issues in path
+#  if [[ ! -L "/opt/trusdx" ]]; then
+#    sudo ln -s "$(pwd)" /opt/trusdx
+#    echo -e "${c_green}Created symlink /opt/trusdx${c_reset}"
+#  fi
+#  
+#  # Make monitor script executable
+#  if [[ -f "trusdx-monitor.sh" ]]; then
+#    chmod +x trusdx-monitor.sh
+#    echo -e "${c_green}Made trusdx-monitor.sh executable${c_reset}"
+#  else
+#    echo -e "${c_yellow}WARNING: trusdx-monitor.sh not found${c_reset}"
+#  fi
+#  
+#  # Create systemd service file
+#  cat > /tmp/TRUSDX.monitor.service <<'SYSTEMD'
+#[Unit]
+#Description=truSDX USB connection monitor
+#After=network.target multi-user.target
+#Wants=network.target
+#
+#[Service]
+#Type=simple
+#User=$USER
+#Environment="PYTHONUNBUFFERED=1"
+#WorkingDirectory=/opt/trusdx
+#ExecStart=/opt/trusdx/trusdx-monitor.sh
+#Restart=on-failure
+#RestartSec=10
+#StandardOutput=journal
+#StandardError=journal
+#
+#[Install]
+#WantedBy=multi-user.target
+#SYSTEMD
+#  
+#  # Replace $USER in service file
+#  sed -i "s/\$USER/$USER/g" /tmp/TRUSDX.monitor.service
+#  
+#  # Install and enable service
+#  sudo cp /tmp/TRUSDX.monitor.service /etc/systemd/system/TRUSDX.monitor.service
+#  rm /tmp/TRUSDX.monitor.service
+#  sudo systemctl daemon-reload
+#  sudo systemctl enable TRUSDX.monitor.service
+#  
+#  echo -e "${c_green}TRUSDX.monitor service installed and enabled${c_reset}"
+#  echo -e "${c_yellow}The service will start automatically on boot${c_reset}"
+#  echo -e "${c_yellow}To start it now: sudo systemctl start TRUSDX.monitor${c_reset}"
+#); then
+#  log_step "[6/6] Setting up TRUSDX.monitor service" OK
+#else
+#  log_step "[6/6] Setting up TRUSDX.monitor service" FAIL "$?"
+#fi
+#TRUSDX_SERVICE_BLOCK
+
+# Record as skipped in the summary
+log_step "[6/6] Setting up TRUSDX.monitor service" OK "(skipped - service disabled by default)"
+
+# Block services that grab serial ports and install udev ignore rules for truSDX
 if (
-  echo -e "${c_blue}[6/6] Setting up TRUSDX.monitor service...${c_reset}"
+  echo -e "${c_blue}[7/7] Protecting truSDX serial port...${c_reset}"
   
-  # Create symlink to avoid space issues in path
-  if [[ ! -L "/opt/trusdx" ]]; then
-    sudo ln -s "$(pwd)" /opt/trusdx
-    echo -e "${c_green}Created symlink /opt/trusdx${c_reset}"
+  # Make ModemManager ignore CH340 (truSDX) completely
+  echo 'SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1"' | sudo tee /etc/udev/rules.d/77-mm-ignore-trusdx.rules >/dev/null
+  
+  # Install shipped udev rules for truSDX power/perms/symlink
+  if [[ -f "99-trusdx.rules" ]]; then
+    sudo cp 99-trusdx.rules /etc/udev/rules.d/99-trusdx.rules
   fi
   
-  # Make monitor script executable
-  if [[ -f "trusdx-monitor.sh" ]]; then
-    chmod +x trusdx-monitor.sh
-    echo -e "${c_green}Made trusdx-monitor.sh executable${c_reset}"
+  # Reload udev rules and trigger
+  sudo udevadm control --reload-rules
+  sudo udevadm trigger
+  
+  # Disable and mask ModemManager if present (prevents grabbing /dev/ttyUSB0)
+  if systemctl list-unit-files | grep -q "^ModemManager.service"; then
+    echo -e "${c_yellow}Disabling and masking ModemManager to prevent serial port grabs...${c_reset}"
+    sudo systemctl disable --now ModemManager || true
+    sudo systemctl mask ModemManager || true
   else
-    echo -e "${c_yellow}WARNING: trusdx-monitor.sh not found${c_reset}"
+    echo -e "${c_green}ModemManager not present or already disabled.${c_reset}"
   fi
-  
-  # Create systemd service file
-  cat > /tmp/TRUSDX.monitor.service <<'SYSTEMD'
-[Unit]
-Description=truSDX USB connection monitor
-After=network.target multi-user.target
-Wants=network.target
-
-[Service]
-Type=simple
-User=$USER
-Environment="PYTHONUNBUFFERED=1"
-WorkingDirectory=/opt/trusdx
-ExecStart=/opt/trusdx/trusdx-monitor.sh
-Restart=on-failure
-RestartSec=10
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-SYSTEMD
-  
-  # Replace $USER in service file
-  sed -i "s/\$USER/$USER/g" /tmp/TRUSDX.monitor.service
-  
-  # Install and enable service
-  sudo cp /tmp/TRUSDX.monitor.service /etc/systemd/system/TRUSDX.monitor.service
-  rm /tmp/TRUSDX.monitor.service
-  sudo systemctl daemon-reload
-  sudo systemctl enable TRUSDX.monitor.service
-  
-  echo -e "${c_green}TRUSDX.monitor service installed and enabled${c_reset}"
-  echo -e "${c_yellow}The service will start automatically on boot${c_reset}"
-  echo -e "${c_yellow}To start it now: sudo systemctl start TRUSDX.monitor${c_reset}"
 ); then
-  log_step "[6/6] Setting up TRUSDX.monitor service" OK
+  log_step "[7/7] Serial-port protection (udev + disable ModemManager)" OK
 else
-  log_step "[6/6] Setting up TRUSDX.monitor service" FAIL "$?"
+  log_step "[7/7] Serial-port protection (udev + disable ModemManager)" FAIL "$?"
 fi
 
 # Verify installation
@@ -456,6 +366,12 @@ echo
 echo -e "${c_green}To run the driver:${c_reset}"
 echo -e "  ${c_blue}./trusdx-txrx-AI.py${c_reset}"
 echo
+# Helpful knobs for PTT testing
+echo -e "${c_blue}Tips:${c_reset}"
+echo -e "  • JS8Call/WSJT-X ‘Test PTT’ often sends no audio. The driver will auto-release PTT after silence." 
+echo -e "  • Tuning knobs: --ptt-silence-timeout <seconds> and --silence-pp-threshold <0-255>."
+echo -e "    Example: ./trusdx-txrx-AI.py -v --ptt-silence-timeout 1.5 --silence-pp-threshold 2"
+echo
 echo -e "${c_yellow}Note: If you were added to the dialout group, you may need to log out and back in.${c_reset}"
 echo -e "${c_yellow}Note: To see the new ALSA devices, verify with: aplay -L | grep trusdx_${c_reset}"
 echo
@@ -463,9 +379,10 @@ echo -e "For WSJT-X/JS8Call configuration:"
 echo -e "  • Radio: Kenwood TS-480"
 echo -e "  • Port: /tmp/trusdx_cat"
 echo -e "  • Baud: 115200"
-echo -e "  • Audio Input: ${c_green}TRUSDX_monitor${c_reset} or ${c_green}TRUSDX.monitor${c_reset} (for receiving from radio)"
-echo -e "  • Audio Output: ${c_green}TRUSDX${c_reset} (for transmitting to radio)"
-echo -e "${c_yellow}Troubleshooting: If hw:Loopback does not exist, run 'sudo modprobe snd-aloop' and reboot${c_reset}"
+echo -e "  • Audio Input: ${c_green}pulse${c_reset} (then select ${c_green}TRUSDX.monitor${c_reset} in the system mixer)"
+echo -e "  • Audio Output: ${c_green}pulse${c_reset} (then route to ${c_green}TRUSDX${c_reset} in the system mixer)"
+echo -e "${c_yellow}Tip: Use 'pavucontrol' → Recording/Playback tabs to pick TRUSDX/TRUSDX.monitor for the apps${c_reset}"
+echo -e "${c_yellow}Troubleshooting: If 'Loopback' card does not exist, run 'sudo modprobe snd-aloop' and reboot${c_reset}"
 
 echo
 read -rp "Press Enter to exit..."

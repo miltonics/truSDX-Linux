@@ -1,0 +1,304 @@
+--- trusdx-txrx-AI.py.orig	2025-08-20 00:30:00.000000000 +0000
++++ trusdx-txrx-AI.py	2025-08-20 00:35:00.000000000 +0000
+@@ -154,7 +154,7 @@
+ # Connection monitoring settings
+ CONNECTION_TIMEOUT = 3.0  # Seconds without data before considering connection lost (reduced for TX)
+ TX_CONNECTION_TIMEOUT = 1.5  # Faster detection for TX mode
+-RECONNECT_DELAY = 1.0     # Faster reconnection (reduced from 2.0)
+-MAX_RECONNECT_ATTEMPTS = 3 # Reduced attempts for faster recovery
++RECONNECT_DELAY = 2.0     # Give hardware time to settle
++MAX_RECONNECT_ATTEMPTS = 0 # 0 = infinite attempts (never give up)
+ MAX_RETRIES = 5           # Maximum retries before exiting with error
+@@ -1025,6 +1025,36 @@
+ def find_audio_device(name, occurance = 0):
+     """Find audio device by name or ALSA PCM descriptor.
+     
++    Special handling for trusdx_tx and trusdx_rx to map to correct Loopback devices.
++    """
++    log(f"[ALSA-AUDIT] Searching for audio device: '{name}'")
++    
++    # Special case for trusdx devices - map to correct Loopback hw devices
++    if name == "trusdx_tx" or name == "trusdx_rx":
++        try:
++            p = state.get('pyaudio_instance')
++            temp_instance = False
++            if not p:
++                p = pyaudio.PyAudio()
++                temp_instance = True
++            
++            # Map trusdx names to Loopback hw device patterns
++            device_map = {
++                "trusdx_tx": ("Loopback", "hw:0,0"),  # TX output goes to hw:0,0
++                "trusdx_rx": ("Loopback", "hw:0,1")   # RX input comes from hw:0,1
++            }
++            
++            card_name, hw_pattern = device_map[name]
++            
++            for i in range(p.get_device_count()):
++                device_info = p.get_device_info_by_index(i)
++                device_name = device_info['name']
++                # Check if this is the correct Loopback device
++                if card_name in device_name and hw_pattern in device_name:
++                    log(f"[ALSA-AUDIT] Found {name} -> {device_name} (index {i})")
++                    if temp_instance:
++                        p.terminate()
++                    return i
++                    
++            if temp_instance:
++                p.terminate()
++        except Exception as e:
++            log(f"Error in special trusdx device lookup: {e}")
++    
++    # Original find_audio_device logic for other devices
++    log(f"[ALSA-AUDIT] Searching for audio device: '{name}'")
+     This function searches PyAudio's device list for:
+     - Exact matches of the provided name
+     - ALSA PCM names like 'trusdx_tx', 'trusdx_rx'
+@@ -1147,12 +1177,6 @@
+             return selected_idx
+         
+         # NO FALLBACK - only use exact device names specified
+-        # This prevents accidentally grabbing .1 sub-devices or wrong Loopback devices
+-        if not result:
+-            log(f"[ALSA-AUDIT] STRICT MODE: Device '{name}' not found - NO FALLBACK to generic Loopback devices")
+-            if config.get('verbose', False):
+-                print(f"\033[1;33m[AUDIO] Device '{name}' not found - strict mode, no fallback\033[0m")
+-        
+         # No device found
+         log(f"Audio device '{name}' not found, using default (-1)")
+         if config.get('verbose', False):
+@@ -1304,6 +1328,33 @@
+ def disable_cat_audio(ser):
++def set_speaker_mute(ser, mute=True, retries=3):
++    """Ensure speaker is muted or unmuted with retries.
++    
++    Args:
++        ser: Serial port object
++        mute: True to mute (UA2), False to unmute (UA1)
++        retries: Number of attempts
++    
++    Returns:
++        bool: True if successful, False otherwise
++    """
++    cmd = b";UA2;" if mute else b";UA1;"
++    cmd_name = "UA2 (mute)" if mute else "UA1 (unmute)"
++    
++    for attempt in range(retries):
++        try:
++            ser.write(cmd)
++            ser.flush()
++            time.sleep(0.2)  # Give radio time to process
++            log(f"Sent {cmd_name} successfully (attempt {attempt + 1}/{retries})")
++            print(f"\033[1;32m[SPEAKER] ✅ {cmd_name} sent successfully\033[0m")
++            return True
++        except Exception as e:
++            log(f"Failed to send {cmd_name} (attempt {attempt + 1}/{retries}): {e}", "ERROR")
++            if attempt < retries - 1:
++                time.sleep(0.3)
++    
++    print(f"\033[1;31m[SPEAKER] ❌ Failed to send {cmd_name} after {retries} attempts\033[0m")
++    return False
++
+     """Ensure audio stream to CAT is disabled after TX ends (UA0)."""
+     state['cat_audio_enabled'] = False
+@@ -1711,10 +1762,15 @@
+         state['reconnecting'] = True
+         state['reconnect_count'] += 1
+         
+-        if state['reconnect_count'] > MAX_RECONNECT_ATTEMPTS:
+-            print(f"\033[1;31m[RECONNECT] ❌ Max retries ({MAX_RECONNECT_ATTEMPTS}) exceeded. Setting hardware disconnected flag.\033[0m")
+-            log(f"FATAL: Maximum retry limit ({MAX_RECONNECT_ATTEMPTS}) exceeded. Unable to maintain stable connection.", "ERROR")
+-            state['reconnecting'] = False
+-            state['hardware_disconnected'] = True  # Set flag for main loop to exit and restart
+-            status[2] = False  # Stop all threads
+-            return
++        # Only limit reconnections if MAX_RECONNECT_ATTEMPTS > 0
++        if MAX_RECONNECT_ATTEMPTS > 0:
++            if state['reconnect_count'] > MAX_RECONNECT_ATTEMPTS:
++                print(f"\033[1;33m[RECONNECT] ⚠️ Max retries ({MAX_RECONNECT_ATTEMPTS}) exceeded. Waiting 10s before resetting counter...\033[0m")
++                log(f"Max reconnect attempts reached, waiting before retry", "WARNING")
++                time.sleep(10)
++                state['reconnect_count'] = 0  # Reset counter and try again
++                print(f"\033[1;33m[RECONNECT] 🔄 Resetting counter and continuing reconnection attempts...\033[0m")
++        else:
++            # Infinite reconnection mode
++            if state['reconnect_count'] % 10 == 0 and state['reconnect_count'] > 0:
++                print(f"\033[1;36m[RECONNECT] ℹ️ Reconnection attempt #{state['reconnect_count']} (infinite mode)\033[0m")
+         
+         log(f"Connection issue detected - attempting reconnection #{state['reconnect_count']}")
+-        print(f"\033[1;33m[RECONNECT] 🔄 Reconnection attempt #{state['reconnect_count']}/{MAX_RECONNECT_ATTEMPTS}...\033[0m")
++        
++        if MAX_RECONNECT_ATTEMPTS > 0:
++            print(f"\033[1;33m[RECONNECT] 🔄 Reconnection attempt #{state['reconnect_count']}/{MAX_RECONNECT_ATTEMPTS}...\033[0m")
++        else:
++            print(f"\033[1;33m[RECONNECT] 🔄 Reconnection attempt #{state['reconnect_count']} (infinite mode)...\033[0m")
+ 
+         # Preserve radio state (frequency, mode) and TX status
+@@ -1836,18 +1892,10 @@
+             time.sleep(0.5)
+             
+             # Speaker-mute guarantee on reconnection - send unconditionally
+-            try:
+-                if config['unmute']:
+-                    new_ser.write(b";UA1;")
+-                    new_ser.flush()
+-                    log("Speaker unmuted")
+-                    print(f"\033[1;33m[RECONNECT] ✅ Speaker unmuted (UA1)\033[0m")
+-                else:
+-                    new_ser.write(b";UA2;")
+-                    new_ser.flush()
+-                    log("Speaker muted")
+-                    print(f"\033[1;32m[RECONNECT] ✅ Speaker muted (UA2)\033[0m")
+-                time.sleep(0.2)  # Give radio time to process
+-            except Exception as mute_error:
+-                log(f"Error setting speaker mute state during reconnection: {mute_error}")
+-                print(f"\033[1;31m[RECONNECT] Error setting speaker mute state: {mute_error}\033[0m")
++            if config['unmute']:
++                set_speaker_mute(new_ser, mute=False)
++            else:
++                set_speaker_mute(new_ser, mute=True)
+             
+         except Exception as e:
+@@ -2168,23 +2216,11 @@
+             ser.flush()
+             time.sleep(0.3)  # Give hardware time to process mode change
+ 
+-            # Retry setting audio mute/unmute state
+-            retries = 3
+-            for attempt in range(retries):
+-                audio_cmd = b";UA2;" if not config['unmute'] else b";UA1;"
+-                ser.write(audio_cmd)
+-                ser.flush()
+-                time.sleep(0.5)  # Give radio time to process
+-
+-                # Capture response for logging
+-                response = ser.read(ser.in_waiting)
+-                log(f"Attempt {attempt + 1}/{retries}: Sent {audio_cmd.decode()} - received: {response}")
+-                
+-                # Assuming success response end with ';'
+-                if response.endswith(b';'):
+-                    break
+-                else:
+-                    time.sleep(0.2)  # Additional delay before retry
++            # Set speaker mute state with retries
++            if config['unmute']:
++                set_speaker_mute(ser, mute=False)
++            else:
++                set_speaker_mute(ser, mute=True)
+             
+             # Ensure speaker is muted by sending explicit mute command
+-            if not config['unmute']:
+-                ser.write(b";UA2;")  # Explicitly mute the speaker
+-                ser.flush() 
+-                time.sleep(0.2)
+-                print(f"\033[1;32m[INIT] ✅ Radio speaker muted (UA2)\033[0m")
+-            else:
+-                print(f"\033[1;33m[INIT] ✅ Radio speaker unmuted (UA1) - use --unmute flag to enable\033[0m")
++            print(f"\033[1;32m[INIT] ✅ Radio initialized with proper speaker settings\033[0m")
+                 
+             print(f"\033[1;32m[INIT] ✅ Radio initialized with basic commands\033[0m")
+@@ -2279,16 +2315,10 @@
+         #status[1] = True
+         
+         # Speaker-mute guarantee on startup - send unconditionally
+-        try:
+-            if config['unmute']:
+-                ser.write(b";UA1;")
+-                ser.flush()
+-                log("Speaker unmuted")
+-                print(f"\033[1;33m[INIT] ✅ Speaker unmuted (UA1)\033[0m")
+-            else:
+-                ser.write(b";UA2;")
+-                ser.flush()
+-                log("Speaker muted")
+-                print(f"\033[1;32m[INIT] ✅ Speaker muted (UA2)\033[0m")
+-            time.sleep(0.2)  # Give radio time to process
+-        except Exception as e:
+-            log(f"Error setting speaker mute state: {e}")
+-            print(f"\033[1;31m[INIT] Error setting speaker mute state: {e}\033[0m")
++        if config['unmute']:
++            set_speaker_mute(ser, mute=False)
++        else:
++            set_speaker_mute(ser, mute=True)
+ 
+         # Store handles in state dictionary for monitoring and reconnection
+@@ -2348,11 +2378,19 @@
+         # Add debug tracking for main loop
+         loop_count = 0
+         header_refresh_count = 0
++        shutdown_requested = False
++        
+         while status[2]:    # wait and idle
+             loop_count += 1
+-            print(f"\033[1;36m[DEBUG] Main loop iteration {loop_count}, status[2]={status[2]}\033[0m")
++            
++            # Only print debug messages in verbose mode
++            if config.get('verbose', False) and loop_count % 60 == 0:
++                print(f"\033[1;36m[DEBUG] Main loop iteration {loop_count}, running normally\033[0m")
+             
+             # Check if hardware disconnection was detected
+             if state.get('hardware_disconnected', False):
+-                log("Hardware disconnection detected in main loop - exiting to restart")
+-                print(f"\033[1;33m[MAIN] Hardware disconnection detected - triggering restart...\033[0m")
+-                status[2] = False  # Stop all threads
+-                break
++                # Don't exit, just trigger reconnection
++                if not state.get('reconnecting', False):
++                    log("Hardware disconnection detected in main loop - triggering reconnection")
++                    print(f"\033[1;33m[MAIN] Hardware disconnection detected - attempting reconnection...\033[0m")
++                    threading.Thread(target=safe_reconnect, daemon=True).start()
++                    state['hardware_disconnected'] = False  # Clear flag
++                time.sleep(1)
++                continue
+             
+             # Check thread status
+-            thread_count = threading.active_count()
+-            print(f"\033[1;36m[DEBUG] Active threads: {thread_count}\033[0m")
++            if config.get('verbose', False) and loop_count % 120 == 0:
++                thread_count = threading.active_count()
++                print(f"\033[1;36m[DEBUG] Active threads: {thread_count}\033[0m")
+             
+             # Refresh header every 30 seconds (30 iterations since we sleep 1 second)
+@@ -2369,7 +2407,6 @@
+                 header_refresh_count = 0
+                 if not config.get('no_header', False):
+                     refresh_header_only()
+-                    print(f"\033[1;36m[HEADER] Periodic header refresh\033[0m")
+             
+             # display some stats every 1 seconds
+             #log(f"{int(time.time()-ts)} buf: {len(buf)}")
+             time.sleep(1)
++            
++            # Check for keyboard interrupt or shutdown request
++            if shutdown_requested:
++                print("\033[1;33m[MAIN] Shutdown requested, cleaning up...\033[0m")
++                status[2] = False
++                break
++                
+     except Exception as e:
+@@ -2380,7 +2417,10 @@
+         status[2] = False
+     except KeyboardInterrupt:
+-        print("Stopping")
++        print("\n\033[1;33m[MAIN] Keyboard interrupt - shutting down gracefully...\033[0m")
+         status[2] = False
+-        ser.write(b";UA0;")
++        # Ensure speaker is muted before exit
++        if ser:
++            set_speaker_mute(ser, mute=True)
++        shutdown_requested = True
+ 
+     try:
+@@ -2516,2 +2556,3 @@
+     parser.add_argument("--no-header", action="store_true", default=False, help="Skip initial version display")
+     parser.add_argument("--no-power-monitor", action="store_true", default=False, help="Disable power monitoring feature")
++    parser.add_argument("--max-reconnect", type=int, default=0, help="Maximum reconnection attempts (0=infinite)")
+     parser.add_argument("--logfile", type=str, help="Override default log file location")
+@@ -2520,2 +2561,6 @@
+     config = vars(args)
+     
++    # Override MAX_RECONNECT_ATTEMPTS with command line value
++    global MAX_RECONNECT_ATTEMPTS
++    MAX_RECONNECT_ATTEMPTS = config['max_reconnect']
++    
+     # Setup logging before any other operations

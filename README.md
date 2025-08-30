@@ -1,18 +1,6 @@
 # TruSDX Linux Driver for JS8Call
 
-🎉 **New Release: v1.2.0 Available!** 🎉
-
 A Python-based CAT interface driver that enables seamless integration between the TruSDX QRP transceiver and JS8Call on Linux systems.
-
-## 🚀 What's New in v1.2.0
-
-- **🔗 Hardware Monitoring & Reconnection**: Automatic device detection and recovery from disconnections
-- **🖥️ Enhanced User Interface**: Persistent header display with real-time status updates
-- **📊 Performance Improvements**: Optimized connection handling and reduced CPU usage
-- **🛠️ Development & Testing**: Comprehensive test suite and automated version management
-- **📦 Easy Installation**: Full pip installation support with setuptools integration
-
-[📋 View Full Release Notes](RELEASE_NOTES_v1.2.0.md) | [📥 Download Binaries](https://github.com/milton-tanaka/trusdx-ai/releases/tag/v1.2.0)
 
 ## Features
 
@@ -20,26 +8,11 @@ A Python-based CAT interface driver that enables seamless integration between th
 - **TX/RX Control**: Handles transmission switching for JS8Call
 - **VU Meter Support**: Visual transmission feedback during operation  
 - **CAT Command Forwarding**: Transparent command passing between JS8Call and radio
+- **RTS/DTR Driver Shim**: Neutralizes RTS/DTR flags to prevent hardware conflicts
 - **Robust Error Handling**: Multiple retry attempts with comprehensive debugging
 - **Auto-detection**: Automatically finds TruSDX USB device
 
 ## Quick Start
-
-### Method 1: Pip Installation (Recommended)
-
-1. **Install from source:**
-   ```bash
-   git clone https://github.com/milton-tanaka/trusdx-ai.git
-   cd trusdx-ai
-   pip install -e .
-   ```
-
-2. **Run the driver:**
-   ```bash
-   trusdx-ai
-   ```
-
-### Method 2: Manual Installation
 
 1. **Install dependencies:**
    ```bash
@@ -51,22 +24,26 @@ A Python-based CAT interface driver that enables seamless integration between th
    ```bash
    python3 trusdx-txrx-AI.py
    ```
-
-### Method 3: Pre-built Binaries
-
-1. **Download the binary** from the [releases page](https://github.com/milton-tanaka/trusdx-ai/releases/tag/v1.2.0)
-2. **Make it executable:**
+   
+   Or for verbose mode with device indices:
    ```bash
-   chmod +x trusdx-ai-v1.2.0
-   ./trusdx-ai-v1.2.0
+   python3 trusdx-txrx-AI.py --verbose
    ```
 
-### Configuration
-
-**Configure JS8Call:**
-- Set CAT control to use TCP/IP connection
-- Host: `localhost` 
-- Port: `4532`
+3. **Configure JS8Call:**
+   
+   **CAT Control:**
+   - Radio: Kenwood TS-480
+   - CAT Control Port: `/tmp/trusdx_cat`
+   - Baud Rate: 115200
+   - Data Bits: 8, Stop Bits: 1, Handshake: None
+   - PTT Method: CAT
+   
+   **Audio Configuration:**
+   - Audio Input (from radio): `ALSA Loopback card 0` (or `hw:Loopback,1,0`)
+   - Audio Output (to radio): `ALSA Loopback card 0` (or `hw:Loopback,0,0`)
+   
+   The driver uses ALSA Loopback devices for audio routing.
 
 ## Requirements
 
@@ -82,6 +59,45 @@ See `INSTALL.txt` for detailed installation instructions.
 ## Usage
 
 See `USAGE.md` for quick usage guide and troubleshooting tips.
+
+### Audio Connection Utility
+
+A helper script `trusdx-audio-connect.sh` is provided to manage audio connections:
+
+```bash
+# Interactive mode
+./trusdx-audio-connect.sh
+
+# Command line mode
+./trusdx-audio-connect.sh connect js8call
+./trusdx-audio-connect.sh verify
+./trusdx-audio-connect.sh test
+```
+
+The utility provides:
+- ALSA Loopback device configuration
+- Application audio routing (JS8Call, WSJT-X, FLDigi)
+- Connection verification
+- Audio recording test
+
+## RTS/DTR Driver Shim (New in v1.2.1)
+
+The driver now includes an intelligent RTS/DTR neutralization system that prevents hardware conflicts:
+
+- **Automatic Detection**: Monitors for RTS/DTR control signals from CAT software
+- **Signal Neutralization**: Safely absorbs RTS/DTR flags before they reach hardware
+- **Hardware Protection**: Prevents potential conflicts with TruSDX USB interface
+- **Transparent Operation**: Works seamlessly with JS8Call, WSJT-X, and other CAT software
+- **Backward Compatibility**: Maintains compatibility with existing configurations
+
+**Benefits:**
+- Eliminates need to manually disable RTS/DTR in client software
+- Prevents "driver shim active" messages in system logs
+- Ensures stable USB communication with TruSDX hardware
+- Reduces potential for USB disconnections during operation
+
+**Technical Details:**
+The shim operates at the Python pyserial level, intercepting RTS/DTR property access and method calls. This approach is transparent to both the hardware and client software, providing a robust solution that works across different operating systems and CAT applications.
 
 ## Contributing
 
@@ -105,39 +121,23 @@ Tested and working with:
 ## Support
 
 If you encounter issues:
-1. Check the troubleshooting section in `USAGE.md`
+1. Check the troubleshooting section below
 2. Review the detailed logs the script provides
-3. Open an issue on GitHub with your configuration details
+3. If `hw:Loopback` does not exist, run `sudo modprobe snd-aloop` and reboot
+4. Open an issue on GitHub with your configuration details
+
+## Troubleshooting
+
+### ALSA Loopback Not Found
+If you get errors about `hw:Loopback` not existing:
+1. Load the ALSA loopback module: `sudo modprobe snd-aloop`
+2. Make it persistent: `echo "snd-aloop" | sudo tee -a /etc/modules`
+3. Reboot your system for the changes to take full effect
+4. Verify the device exists: `aplay -l | grep Loopback`
 
 ## Acknowledgments
 
 Thanks to the amateur radio community and JS8Call developers for their excellent software that makes digital communications accessible to everyone.
-
-## Windows vs. Linux Feature Comparison
-
-| Feature | Windows Implementation | Linux Implementation | Notes |
-|---------|----------------------|--------------------|---------|
-| **Audio Routing** | VB-Audio Virtual Audio Cable | PulseAudio null-sink | Linux uses native audio subsystem |
-| **CAT Bridging** | com0com virtual COM ports | PTY (pseudo-terminal) | Linux uses native device files |
-| **PTT Control** | Manual virtual device setup | Integrated CAT/VOX | Linux has built-in support |
-| **Installation** | Multiple manual driver installs | Single setup script | Linux requires fewer dependencies |
-| **Virtual Devices** | Third-party drivers required | Native OS support | Linux advantage |
-| **Audio Latency** | Dependent on VB-Audio | Direct PulseAudio access | Linux potentially lower latency |
-| **System Integration** | External dependencies | Native integration | Linux more tightly integrated |
-
-### Windows-Only Dependencies (Not applicable on Linux)
-
-- **VB-Audio Virtual Audio Cable**: Linux uses PulseAudio null-sink instead
-- **com0com**: Linux uses PTY for virtual serial ports  
-- **Driver signing workarounds**: Not needed on Linux
-- **Manual COM port configuration**: Linux auto-configures device files
-
-### Linux Equivalents for Windows Features
-
-- **Audio routing**: `pactl load-module module-null-sink` replaces VB-Audio
-- **Virtual serial ports**: `socat` and PTY replace com0com
-- **Device permissions**: `udev` rules replace Windows driver installation
-- **Audio control**: PulseAudio mixer replaces Windows audio control panel
 
 ---
 
