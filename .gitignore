@@ -157,3 +157,23 @@ cython_debug/
 #  be added to the global gitignore or merged into this project gitignore.  For a PyCharm
 #  project, it is common to ignore the .idea directory.
 .idea/
+
+# Project-specific ignores
+archive/
+logs/
+*.log
+99-trusdx.rules
+*.patch
+*.bak
+*.tmp
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# Virtual serial ports and device files
+/tmp/trusdx*
+/tmp/ttyS*
+
+# Configuration files that might contain personal data
+~/.config/trusdx-ai.json

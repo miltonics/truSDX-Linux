@@ -1,9 +1,40 @@
-# truSDX-AI Driver Requirements
-# Install with: pip3 install --user -r requirements.txt
+# truSDX Linux Driver - Python Requirements
+# ==========================================
+# Install with: pip3 install -r requirements.txt
+# Or: ./setup.sh (recommended - handles everything)
 
-pyaudio>=0.2.11
-pyserial>=3.4
+# Core Dependencies
+pyserial>=3.5    # Serial port communication with (tr)uSDX hardware
+pyaudio>=0.2.11  # Audio stream handling for TX/RX
 
-# System packages (install via apt):
-# sudo apt install python3 python3-pip portaudio19-dev pulseaudio-utils
+# Optional Dependencies (for development/testing)
+# pytest>=7.0     # Unit testing framework
+# black>=22.0     # Code formatter
+# pylint>=2.15    # Code linter
+
+# System Package Requirements (not installable via pip)
+# ======================================================
+# These must be installed using your system package manager:
+#
+# Ubuntu/Debian/Mint:
+#   sudo apt install python3 python3-pip python3-venv portaudio19-dev
+#   sudo apt install pulseaudio-utils  # or pipewire for newer systems
+#   sudo apt install socat  # optional, for virtual serial port testing
+#
+# Fedora/RHEL:
+#   sudo dnf install python3 python3-pip portaudio-devel
+#   sudo dnf install pulseaudio-utils pipewire
+#   sudo dnf install socat  # optional
+#
+# Arch Linux:
+#   sudo pacman -S python python-pip portaudio
+#   sudo pacman -S pulseaudio pipewire
+#   sudo pacman -S socat  # optional
+
+# Hardware Notes
+# ==============
+# - Requires (tr)uSDX transceiver connected via USB
+# - USB device should appear as /dev/ttyUSB0 or similar
+# - May need to add user to 'dialout' group: sudo usermod -a -G dialout $USER
+# - Logout and login again for group changes to take effect
 
