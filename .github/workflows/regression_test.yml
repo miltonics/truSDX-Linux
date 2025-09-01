@@ -76,22 +76,22 @@ jobs:
         reporter: java-junit
         fail-on-error: false
     
-    - name: Create issue on failure
-      if: failure()
-      uses: actions/github-script@v6
-      with:
-        script: |
-          const issue = await github.rest.issues.create({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            title: `Regression test failed on ${context.sha.substring(0, 7)}`,
-            body: `The regression test failed on commit ${context.sha}.
-            
-            **Python Version:** ${{ matrix.python-version }}
-            **Branch:** ${context.ref}
-            **Run:** ${context.runNumber}
-            
-            Please check the [workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) for details.`,
-            labels: ['bug', 'ci-failure']
-          });
-          console.log(`Created issue #${issue.data.number}`);
+# - name: Create issue on failure
+#   if: failure()
+#   uses: actions/github-script@v6
+#   with:
+#     script: |
+#       const issue = await github.rest.issues.create({
+#         owner: context.repo.owner,
+#         repo: context.repo.repo,
+#         title: `Regression test failed on ${context.sha.substring(0, 7)}`,
+#         body: `The regression test failed on commit ${context.sha}.
+#         
+#         **Python Version:** ${{ matrix.python-version }}
+#         **Branch:** ${context.ref}
+#         **Run:** ${context.runNumber}
+#         
+#         Please check the [workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) for details.`,
+#         labels: ['bug', 'ci-failure']
+#       });
+#       console.log(`Created issue #${issue.data.number}`);
