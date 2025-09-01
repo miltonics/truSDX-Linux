@@ -250,6 +250,12 @@ Tested and working with:
 - Linux systems (Ubuntu, Mint, Debian)
 - JS8Call v2.2+
 
+## Testing
+
+Tested and working with:
+Linux Mint 22.1
+Linux Mint Xfce 22.1
+
 ## Support
 
 If you encounter issues:
