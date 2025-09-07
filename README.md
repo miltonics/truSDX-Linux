@@ -247,14 +247,15 @@ The project includes comprehensive testing and debugging tools. Development file
 
 Tested and working with:
 - TruSDX QRP Transceiver
-- Linux systems (Ubuntu, Mint, Debian)
 - JS8Call v2.2+
+- wsjtx 2.7.0
 
 ## Testing
 
 Tested and working with:
 Linux Mint 22.1
 Linux Mint Xfce 22.1
+Ubuntu 25.04
 
 ## Support
 
@@ -282,7 +283,6 @@ If you get errors about `hw:Loopback` not existing:
 
 ### Contributors
 - **Milton (miltonics)** - Linux port maintainer, testing, documentation
-- The amateur radio community for testing and feedback
 
 ### Special Thanks
 - JS8Call developers for their excellent digital mode software
